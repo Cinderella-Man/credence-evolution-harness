@@ -276,10 +276,22 @@ defmodule Cev.Preflight do
   # silent stall into a loud, actionable halt, and guarantees a runtime
   # :full_suite_red is genuinely the new rule's regression.
   defp credence_suite_green!(clone) do
+    Logger.info(
+      "[Preflight] running the full Credence HEAD suite in #{clone} " <>
+        "(all rules + the ~500-project over-firing corpus — this takes several MINUTES, no output until done)…"
+    )
+
+    t0 = System.monotonic_time(:millisecond)
+
     {out, code} =
       System.cmd("mix", ["test"], cd: clone, stderr_to_stdout: true, env: [{"MIX_ENV", "test"}])
 
-    unless code == 0 do
+    secs = Float.round((System.monotonic_time(:millisecond) - t0) / 1000, 1)
+
+    if code == 0 do
+      Logger.info("[Preflight] Credence HEAD suite GREEN (#{secs}s)")
+    else
+      Logger.error("[Preflight] Credence HEAD suite RED (exit #{code}, #{secs}s)")
       tail = out |> String.split("\n") |> Enum.take(-40) |> Enum.join("\n")
 
       fail("""
