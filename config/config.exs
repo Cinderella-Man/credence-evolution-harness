@@ -54,18 +54,18 @@ config :cev,
       stream: false
     },
     local_qwen_non_thinking: %{
-      url: "http://localhost:8080/v1/chat/completions",
-      model: "Qwen/Qwen3.6-27B",
+      url: "http://localhost:8000/v1/chat/completions",
+      model: "unsloth/Qwen3-Coder-Next-GGUF-UD-Q6_K_XL",
       token_param: :max_tokens,
-      max_tokens: 8_192,
+      max_tokens: 256_000,
       chat_template_kwargs: %{enable_thinking: false},
       stream: false
     },
     local_qwen_thinking: %{
-      url: "http://localhost:8080/v1/chat/completions",
-      model: "Qwen/Qwen3.6-27B",
+      url: "http://localhost:8000/v1/chat/completions",
+      model: "unsloth/Qwen3-Coder-Next-GGUF-UD-Q6_K_XL",
       token_param: :max_tokens,
-      max_tokens: 8_192,
+      max_tokens: 256_000,
       stream: false
     },
     # Optional alternative CLASSIFIER provider (07 §3.1, 08 T0.1b). Claude Opus
