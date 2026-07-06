@@ -5,8 +5,17 @@ defmodule Cev.ClaudeCode do
 
   "Claude Code" (the harness) ≠ "Claude" (the model): `ANTHROPIC_MODEL` is Mimo,
   so this does not reintroduce an Anthropic dependency. The agent runs sandboxed
-  in the credence clone (`cwd`), may Read/Grep/Glob/Edit/Write and run
-  `mix test`, but **cannot run git** (disallowed) and has no git creds.
+  in the credence clone (`cwd`).
+
+  It runs headless (`-p`), so there is no human to answer permission prompts —
+  the session is started with `--permission-mode bypassPermissions` to
+  auto-approve tool use (otherwise the agent stalls, begging for approval and
+  burning turns the moment it runs a Bash command outside the auto-allow list).
+  The **git deny still applies** (`--disallowedTools "Bash(git:*)"` is a hard
+  block regardless of permission mode) and there are no git creds in its env, so
+  the agent may Read/Grep/Glob/Edit/Write + run mix/shell commands to author and
+  verify a rule, but cannot commit or push — the token-free Gate does that after
+  validating the diff.
 
   Uses `--output-format stream-json` over a **Port** so the agent's steps/tool
   uses are logged **live** (a long session against slow Mimo can run many minutes
@@ -31,6 +40,9 @@ defmodule Cev.ClaudeCode do
 
   @allowed_tools ~w(Read Grep Glob Edit Write) ++ ["Bash(mix test:*)"]
   @disallowed_tools ["Bash(git:*)"]
+  # Headless: auto-approve tool use (deny rules below still hard-block git).
+  # Without this the agent stalls on an unanswerable permission prompt.
+  @permission_mode "bypassPermissions"
 
   @doc "Run the agent with `prompt`. `opts`: `:cwd`, `:max_turns`, `:timeout_ms`, `:row`."
   def run(prompt, opts \\ []) do
@@ -46,6 +58,7 @@ defmodule Cev.ClaudeCode do
 
     args =
       ["-p", "--output-format", "stream-json", "--verbose", "--add-dir", clone] ++
+        ["--permission-mode", @permission_mode] ++
         ["--allowedTools"] ++ @allowed_tools ++
         ["--disallowedTools"] ++ @disallowed_tools ++
         ["--max-turns", to_string(max_turns)]
