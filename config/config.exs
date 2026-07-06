@@ -4,8 +4,13 @@ config :cev,
   # ── Data source (native-Elixir tasks read straight off the filesystem) ─
   # The slice is dir-names starting `0` and ending `01` (230 tasks — the
   # first variant of each numbered problem family). Widen the glob to pull
-  # more variants / families. `task_root` points at elixir-sft-dataset/tasks.
-  task_root: Path.expand(Path.join(File.cwd!(), "../elixir-sft-dataset/tasks")),
+  # more variants / families.
+  #
+  # `task_root` defaults to the sibling `elixir-sft-dataset/tasks`, resolved
+  # relative to THIS file (`__DIR__` = the config/ dir), so it is independent of
+  # the directory you launch `mix` from. Override without editing this file via
+  # the `CEV_TASK_ROOT` env var, or set an absolute path string here.
+  task_root: Path.expand("../../elixir-sft-dataset/tasks", __DIR__),
   task_glob: "0*01",
 
   # ── Retry budget ────────────────────────────────────────────────────

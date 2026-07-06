@@ -56,8 +56,12 @@ defmodule Cev.Preflight do
     unless File.dir?(task_root) and TaskSource.count() > 0 do
       fail("""
       No tasks found: task_root=#{task_root} glob=#{Config.task_glob()} matched nothing.
-      Fix: clone the dataset (git clone https://github.com/Cinderella-Man/elixir-sft-dataset
-      next to this project), or set :task_root / :task_glob in config.exs.
+      Fix one of:
+        • clone the dataset as a sibling of this project:
+            git clone https://github.com/Cinderella-Man/elixir-sft-dataset
+        • point CEV_TASK_ROOT at your dataset's tasks dir:
+            CEV_TASK_ROOT=/path/to/elixir-sft-dataset/tasks CEV_RUN=1 mix run --no-halt
+        • or set :task_root / :task_glob in config/config.exs.
       """)
     end
 

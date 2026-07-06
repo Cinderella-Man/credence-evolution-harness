@@ -42,6 +42,19 @@ Key config knobs (`config/config.exs`): `task_root` / `task_glob` (data source),
 `solve_params_schedule` (per-pass temperature), `max_retries` (3), `stages`
 (solve = local, classify/implement = Mimo), `validator_test_timeout_s` (60).
 
+Paths default to siblings of this project (resolved via `__DIR__`, so they don't
+depend on where you launch `mix` from) and can be overridden per-run without
+editing config:
+
+| Env var | Overrides | Default |
+|---|---|---|
+| `CEV_TASK_ROOT` | dataset tasks dir | `../elixir-sft-dataset/tasks` |
+| `CEV_CREDENCE_CLONE` | the Credence clone | `../credence` |
+| `CEV_SOLVE_PROVIDER` / `CEV_CLASSIFY_PROVIDER` | per-stage model provider | from `config.exs` |
+
+> **Secrets note:** `config/secrets.exs` must use `config :cev, …`. If you copied
+> it from the Tunex project, rename `config :tunex` → `config :cev`.
+
 ## Run
 
 ```

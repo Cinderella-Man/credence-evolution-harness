@@ -30,10 +30,20 @@ defmodule Cev.Config do
 
   # ── Data source (native-Elixir tasks) ───────────────────────────────
 
-  @doc "Path to the elixir-sft-dataset tasks dir (defaults to sibling ../elixir-sft-dataset/tasks)."
+  @doc """
+  Absolute path to the dataset tasks dir. Resolution order (first wins):
+
+    1. `CEV_TASK_ROOT` env var
+    2. `:task_root` in config (config.exs resolves the sibling via `__DIR__`)
+    3. sibling `../elixir-sft-dataset/tasks` relative to the current dir
+
+  A relative value (from the env var or config) is expanded against the current
+  working directory.
+  """
   def task_root do
-    Application.get_env(:cev, :task_root) ||
-      Path.expand(Path.join(File.cwd!(), "../elixir-sft-dataset/tasks"))
+    (env("CEV_TASK_ROOT") || Application.get_env(:cev, :task_root) ||
+       "../elixir-sft-dataset/tasks")
+    |> Path.expand()
   end
 
   @doc "Glob (relative to task_root) selecting task dirs. Default `0*01` = 230 tasks."
@@ -101,16 +111,24 @@ defmodule Cev.Config do
   # ── Paths ───────────────────────────────────────────────────────────
 
   @doc """
-  Path to the Credence clone (path-dep target + push origin).
+  Absolute path to the Credence clone (path-dep target + push origin).
 
-  Optional in config: when `:credence_clone` is unset (or nil), defaults to a
-  sibling `credence/` directory next to this project — i.e. `../credence`
-  relative to the project root — so a fresh deploy needs no path edit.
+  Resolution order (first wins): the `CEV_CREDENCE_CLONE` env var, the
+  `:credence_clone` config key, else the sibling `../credence` relative to the
+  current dir — so a fresh deploy needs no path edit.
   """
   def credence_clone do
-    case Application.get_env(:cev, :credence_clone) do
-      nil -> Path.expand(Path.join(File.cwd!(), "../credence"))
-      path -> path
+    (env("CEV_CREDENCE_CLONE") || Application.get_env(:cev, :credence_clone) ||
+       "../credence")
+    |> Path.expand()
+  end
+
+  # Read an env var, treating unset/blank as absent.
+  defp env(name) do
+    case System.get_env(name) do
+      nil -> nil
+      "" -> nil
+      value -> value
     end
   end
   def git_identity, do: Application.get_env(:cev, :git_identity, %{})

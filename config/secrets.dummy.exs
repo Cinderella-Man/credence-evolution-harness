@@ -2,6 +2,11 @@ import Config
 
 # Template for config/secrets.exs (the real file is gitignored).
 # Copy to config/secrets.exs and fill in real values.
+#
+# ⚠️  The application atom is `:cev` (NOT `:tunex`). If you copied a secrets.exs
+#     from the opc-sft-stage2-elixir/Tunex project, change `config :tunex` →
+#     `config :cev`, or Elixir warns "configured application :tunex … not
+#     available" and none of your keys are seen.
 config :cev,
   # Mimo chat-completions auth (Translate + Solve-remote-override).
   secret_providers: %{
