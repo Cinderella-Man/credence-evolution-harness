@@ -1,0 +1,18 @@
+# Build + deps
+/_build/
+/cover/
+/deps/
+/doc/
+/.fetch
+erl_crash.dump
+*.ez
+cev-*.tar
+
+# Run-scoped + cached state (regenerable / large).
+# NOTE: var/cache/task_verdicts.jsonl (the sanity-gate verdicts) lives under
+# var/ and is intentionally NOT committed — it is a local cache keyed by
+# dataset content hashes.
+/var/
+
+# Secrets (real values live here; commit secrets.dummy.exs only)
+/config/secrets.exs
