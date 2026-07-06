@@ -277,28 +277,33 @@ defmodule Cev.Preflight do
   # :full_suite_red is genuinely the new rule's regression.
   defp credence_suite_green!(clone) do
     Logger.info(
-      "[Preflight] running the full Credence HEAD suite in #{clone} " <>
-        "(all rules + the ~500-project over-firing corpus — this takes several MINUTES, no output until done)…"
+      "[Preflight] running the full Credence HEAD suite in #{clone} — streaming live " <>
+        "below (all rules + the ~500-project over-firing corpus; takes several minutes)…"
     )
 
     t0 = System.monotonic_time(:millisecond)
 
-    {out, code} =
-      System.cmd("mix", ["test"], cd: clone, stderr_to_stdout: true, env: [{"MIX_ENV", "test"}])
+    # Stream the child's output live (into IO.stream) instead of buffering it in
+    # System.cmd until exit — so ExUnit's progress + the corpus's own "N done"
+    # prints appear as they happen, and a multi-minute run doesn't look frozen.
+    {_out, code} =
+      System.cmd("mix", ["test"],
+        cd: clone,
+        into: IO.stream(:stdio, :line),
+        stderr_to_stdout: true,
+        env: [{"MIX_ENV", "test"}]
+      )
 
     secs = Float.round((System.monotonic_time(:millisecond) - t0) / 1000, 1)
 
     if code == 0 do
       Logger.info("[Preflight] Credence HEAD suite GREEN (#{secs}s)")
     else
-      Logger.error("[Preflight] Credence HEAD suite RED (exit #{code}, #{secs}s)")
-      tail = out |> String.split("\n") |> Enum.take(-40) |> Enum.join("\n")
-
       fail("""
-      Credence HEAD suite is NOT green in #{clone} (mix test exit #{code}).
-      A red HEAD makes the Gate reject every rule (:full_suite_red). Fix the clone
-      (add the missing test / revert the offending rule), then re-run. Tail:
-      #{tail}
+      Credence HEAD suite is NOT green in #{clone} (mix test exit #{code}, after #{secs}s).
+      A red HEAD makes the Gate reject every rule (:full_suite_red). See the streamed
+      test output above; fix the clone (add the missing test / revert the offending
+      rule), then re-run.
       """)
     end
   end
