@@ -91,12 +91,27 @@ defmodule Cev.Preflight do
     end
   end
 
+  @doc """
+  Whether an implement driver needs `claude_code_auth_token` in secrets.
+
+  Public because `check_secrets!/0` cannot be tested — `fail/1` calls
+  `System.halt/1` — and this predicate is the part that was wrong. It compared
+  against `:claude_code`, which no code path ever produces: the canonical atom
+  is `:cc` (`config.exs`, `Cev.Implement.run/2`, `rule_gen_smoke!/0`). So
+  `needs_cc` was permanently false and the CC token was never validated by the
+  secrets check — masked only because `cc_smoke!/0` raises later in preflight,
+  i.e. after the check that exists to give the clear error message.
+  """
+  @spec needs_cc_token?(atom()) :: boolean()
+  def needs_cc_token?(:cc), do: true
+  def needs_cc_token?(_), do: false
+
   defp check_secrets! do
     secret_providers = Application.get_env(:cev, :secret_providers, %{})
     has_chat = get_in(secret_providers, [:xiaomi_mimo_2_5_pro, :headers, :Authorization]) != nil
     # The CC token is only needed for the (legacy) Claude Code path; :pi reuses
     # the chat key via the env-injected extension, :llm uses the chat endpoint.
-    needs_cc = Config.implement_driver() == :claude_code
+    needs_cc = needs_cc_token?(Config.implement_driver())
     has_cc = Application.get_env(:cev, :claude_code_auth_token) != nil
 
     unless has_chat and (has_cc or not needs_cc) do
@@ -125,7 +140,10 @@ defmodule Cev.Preflight do
     local = rev(clone, "HEAD")
     origin = rev(clone, "origin/#{@branch}")
     {ahead, _} = git(clone, ["rev-list", "--count", "origin/#{@branch}..HEAD"])
-    Logger.info("[Preflight] #{@branch} at #{local}, origin at #{origin}, #{String.trim(ahead)} ahead")
+
+    Logger.info(
+      "[Preflight] #{@branch} at #{local}, origin at #{origin}, #{String.trim(ahead)} ahead"
+    )
 
     case git(clone, ["push", "origin", @branch]) do
       {_o, 0} -> Logger.info("[Preflight] push catch-up OK")
@@ -201,7 +219,11 @@ defmodule Cev.Preflight do
     File.mkdir_p!(tmp)
 
     try do
-      case Cev.ClaudeCode.run("Reply with exactly: OK", cwd: tmp, max_turns: 2, timeout_ms: 90_000) do
+      case Cev.ClaudeCode.run("Reply with exactly: OK",
+             cwd: tmp,
+             max_turns: 2,
+             timeout_ms: 90_000
+           ) do
         {:ok, %{is_error: false, result_text: text}} ->
           Logger.info("[Preflight] cc smoke OK: #{String.slice(text, 0, 40)}")
 

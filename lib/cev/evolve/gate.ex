@@ -17,12 +17,12 @@ defmodule Cev.Evolve.Gate do
                                    equivalence/fix/check-meta, scope-parity) — a red
                                    here is a plain `:full_suite_red`, rejected
                                    WITHOUT paying the corpus. ONLY if that is green
-                                   do we run the full `mix test` (~8 min), which adds
-                                   Credence's real-world over-firing corpus (a
+                                   do we run `mix test --only corpus` (~4 min), which
+                                   is Credence's real-world over-firing corpus (a
                                    snapshot ratchet, `../credence/docs/09`), so a
                                    rule that over-fires on idiomatic real code is
-                                   rejected here for free. Non-corpus already passed,
-                                   so a full-suite red IS the corpus:
+                                   rejected here for free. Only corpus tests ran,
+                                   so a red in phase 2 IS the corpus:
                                    `Cev.Evolve.Corpus.classify_failure/1` tags it
                                    `{:corpus, :over_fire|:narrowing, …}` and the
                                    caller preserves the patch + a drop-or-accept report.
@@ -144,7 +144,10 @@ defmodule Cev.Evolve.Gate do
       git(clone, ["add", "-A"])
 
       if exit_code != 0 do
-        Logger.info("[Gate] mutation OK — changed test(s) RED without the rule (exit #{exit_code})")
+        Logger.info(
+          "[Gate] mutation OK — changed test(s) RED without the rule (exit #{exit_code})"
+        )
+
         :ok
       else
         {:reject, {:mutation_no_effect, test_files}}
@@ -189,11 +192,20 @@ defmodule Cev.Evolve.Gate do
         Logger.info("[Gate] corpus-free suite RED — rejecting before the corpus scan")
         {:reject, :full_suite_red}
 
-      # Non-corpus already passed, so a full-suite red is the corpus layer. Capture
-      # the agent's diff BEFORE classification touches the snapshot, so a corpus-only
-      # reject (over-fire to drop / narrowing to accept) is preserved + re-appliable
-      # by the maintainer instead of silently discarded.
-      run_tests(clone, []) != 0 ->
+      # Phase 2 runs `--only corpus`, not the whole suite: the corpus-free half
+      # already passed above, so re-running it is pure duplication. That
+      # duplication used to cost ~13s (docs/13 P5); the suite has since grown to
+      # ~120s non-corpus, so this now saves ~2 minutes per candidate — and it
+      # makes the corpus phase separately timeable in the Gate log.
+      #
+      # It also turns the inference below into a fact. Before, "a full-suite red
+      # IS the corpus" was reasoning from the previous phase having passed; now
+      # only corpus tests ran, so a red here is a corpus red by construction.
+      #
+      # Capture the agent's diff BEFORE classification touches the snapshot, so a
+      # corpus-only reject (over-fire to drop / narrowing to accept) is preserved
+      # + re-appliable by the maintainer instead of silently discarded.
+      run_tests(clone, [], ["--only", "corpus"]) != 0 ->
         patch = staged_patch(clone)
 
         case Corpus.classify_failure(clone) do
