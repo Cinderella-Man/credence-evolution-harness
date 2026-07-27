@@ -224,7 +224,14 @@ defmodule Cev.Validator do
         {output, test_code_exit} =
           System.cmd(
             "timeout",
-            ["--kill-after=5", "#{timeout_s}", "mix", "test", "test/solution_test.exs", "--no-deps-check"],
+            [
+              "--kill-after=5",
+              "#{timeout_s}",
+              "mix",
+              "test",
+              "test/solution_test.exs",
+              "--no-deps-check"
+            ],
             cd: workspace,
             stderr_to_stdout: true,
             env: [{"MIX_ENV", "test"}]
@@ -239,8 +246,15 @@ defmodule Cev.Validator do
             failures
 
           test_code_exit == 124 ->
-            Logger.warning("[Validator.run] tests: TIMEOUT after #{timeout_s}s (likely an infinite loop)")
-            failures ++ [{:test, "TIMEOUT after #{timeout_s}s — the solution did not terminate (likely an infinite loop)"}]
+            Logger.warning(
+              "[Validator.run] tests: TIMEOUT after #{timeout_s}s (likely an infinite loop)"
+            )
+
+            failures ++
+              [
+                {:test,
+                 "TIMEOUT after #{timeout_s}s — the solution did not terminate (likely an infinite loop)"}
+              ]
 
           true ->
             Logger.warning("[Validator.run] tests: FAILED")
@@ -332,6 +346,13 @@ defmodule Cev.Validator do
 
     Logger.debug("[run_credence_fix] exit=#{code} output:\n#{output}")
 
+    # H12. The classifier's whole input — the APPLIED_RULES closed set — used to
+    # exist only inside that Logger.debug line, recovered by regex from the row
+    # log. That made a log-level change a silent severing of rule-gen from
+    # validation: no error, just an empty closed set and a classifier reasoning
+    # about nothing. The sidecar is the contract; the log line stays for humans.
+    Cev.RowLog.write_sidecar("applied_rules", output)
+
     fixed? = String.contains?(output, "FIXED")
 
     cond do
@@ -369,9 +390,7 @@ defmodule Cev.Validator do
 
       code != 0 ->
         # Script crashed or credence not available
-        Logger.warning(
-          "[run_credence_fix] script error (exit #{code}): #{String.trim(output)}"
-        )
+        Logger.warning("[run_credence_fix] script error (exit #{code}): #{String.trim(output)}")
 
         :error
 
@@ -391,7 +410,10 @@ defmodule Cev.Validator do
       Logger.warning("[Validator] test code missing `use ExUnit.Case` — injecting")
 
       # Insert `use ExUnit.Case, async: false` after the first `defmodule ... do` line
-      case Regex.replace(~r/(defmodule\s+\S+\s+do\s*\n)/, test_code, "\\1  use ExUnit.Case, async: false\n", global: false) do
+      case Regex.replace(
+             ~r/(defmodule\s+\S+\s+do\s*\n)/,
+             test_code,
+             "\\1  use ExUnit.Case, async: false\n", global: false) do
         ^test_code ->
           # Regex didn't match (malformed module?) — prepend as last resort
           Logger.warning("[Validator] could not find defmodule line — prepending use ExUnit.Case")

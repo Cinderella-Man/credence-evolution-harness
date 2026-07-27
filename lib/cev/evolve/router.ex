@@ -45,7 +45,9 @@ defmodule Cev.Evolve.Router do
   def run(index, solve_outcome, clone \\ Config.credence_clone(), opts \\ []) do
     RowLog.filesync()
     log = File.read!(RowLog.path(index))
-    entries = AppliedRules.parse(log)
+    # Sidecar first, row log as fallback (H12) — the closed set is a contract
+    # between validation and classification, not a by-product of log verbosity.
+    entries = AppliedRules.for_row(index)
 
     case AppliedRules.reverted(entries) do
       [culprit | _] -> reverted_lane(index, culprit, log, clone, opts)
@@ -56,7 +58,9 @@ defmodule Cev.Evolve.Router do
   # ── :reverted deterministic bugfix lane (07 §3.9) ───────────────────────
 
   defp reverted_lane(index, culprit, log, clone, opts) do
-    Logger.info("[Router] :reverted culprit #{inspect(culprit)} — deterministic bugfix, no classifier")
+    Logger.info(
+      "[Router] :reverted culprit #{inspect(culprit)} — deterministic bugfix, no classifier"
+    )
 
     case RulePaths.resolve(culprit, clone) do
       {:ok, r} ->
@@ -125,7 +129,9 @@ defmodule Cev.Evolve.Router do
     novelty = Keyword.get(opts, :novelty, &Novelty.check/2)
 
     if novelty.(spec.before, clone) == :covered do
-      Logger.info("[Router] note: an existing rule may overlap this idiom (non-blocking) — building anyway")
+      Logger.info(
+        "[Router] note: an existing rule may overlap this idiom (non-blocking) — building anyway"
+      )
     end
 
     new_rule_after_equiv(index, spec, log, clone, opts)
@@ -276,7 +282,12 @@ defmodule Cev.Evolve.Router do
     %{
       mode: :new,
       phase: spec.phase,
-      spec: %{before: spec.before, after: spec.after, rationale: spec.rationale, assumptions: spec.assumptions},
+      spec: %{
+        before: spec.before,
+        after: spec.after,
+        rationale: spec.rationale,
+        assumptions: spec.assumptions
+      },
       scaffold: scaffold,
       scaffold_files: scaffold.files,
       clone: clone,
@@ -324,18 +335,34 @@ defmodule Cev.Evolve.Router do
     |> add_diagnostic_bugfix(r, log)
   end
 
-  defp bugfix_spec(nil), do: %{before: "(see the row log / reverted diff)", after: "(repair the fix)", rationale: "broke compilation (:reverted)", assumptions: []}
-  defp bugfix_spec(spec), do: %{before: spec.before, after: spec.after, rationale: spec.rationale, assumptions: spec.assumptions}
+  defp bugfix_spec(nil),
+    do: %{
+      before: "(see the row log / reverted diff)",
+      after: "(repair the fix)",
+      rationale: "broke compilation (:reverted)",
+      assumptions: []
+    }
+
+  defp bugfix_spec(spec),
+    do: %{
+      before: spec.before,
+      after: spec.after,
+      rationale: spec.rationale,
+      assumptions: spec.assumptions
+    }
 
   defp add_ast_bugfix(ctx, nil, _r), do: ctx
   defp add_ast_bugfix(%{phase: :syntax} = ctx, _spec, _r), do: ctx
+
   defp add_ast_bugfix(ctx, spec, _r) do
     ctx
     |> Map.put(:ast_before, Credence.ast(spec.before, ctx.clone))
     |> Map.put(:ast_after, Credence.ast(spec.after, ctx.clone))
   end
 
-  defp add_diagnostic_bugfix(%{phase: :semantic} = ctx, _r, log), do: Map.put(ctx, :real_diagnostic, extract_diagnostic(log))
+  defp add_diagnostic_bugfix(%{phase: :semantic} = ctx, _r, log),
+    do: Map.put(ctx, :real_diagnostic, extract_diagnostic(log))
+
   defp add_diagnostic_bugfix(ctx, _r, _log), do: ctx
 
   # ── Helpers ──────────────────────────────────────────────────────────────

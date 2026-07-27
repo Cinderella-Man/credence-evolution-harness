@@ -60,6 +60,49 @@ defmodule Cev.RowLog do
   @doc "Path of the current row's log file (by index)."
   def path(index), do: log_path(index)
 
+  @doc """
+  Path of a sidecar file beside row `index`'s log, e.g. `<index>.applied_rules`.
+
+  Sidecars exist so a structured hand-off between run stages does not have to
+  survive as prose inside the log. `APPLIED_RULES` used to reach the classifier
+  only by riding a `Logger.debug/1` into this file and being regex'd back out
+  (H12) — a contract that raising the log level would have severed silently,
+  handing the classifier an empty closed set with no error anywhere.
+
+  Sidecars move with the log on every outcome, so a finished row keeps them.
+  """
+  @spec sidecar(term(), String.t()) :: String.t()
+  def sidecar(index, ext), do: Path.rootname(log_path(index)) <> "." <> ext
+
+  @doc """
+  Write a sidecar beside the row log currently being captured.
+
+  The open row is derived from the live handler's own config rather than from
+  separately tracked state, so it cannot disagree with where the log is actually
+  going. A no-op when no row is open (e.g. a unit test driving the validator
+  directly), which is why it returns `:ok` either way rather than raising.
+  """
+  @spec write_sidecar(String.t(), iodata()) :: :ok
+  def write_sidecar(ext, contents) do
+    case current_log_path() do
+      nil ->
+        :ok
+
+      path ->
+        File.write!(Path.rootname(path) <> "." <> ext, contents)
+        :ok
+    end
+  end
+
+  @doc "Path of the row log being captured right now, or nil when none is open."
+  @spec current_log_path() :: String.t() | nil
+  def current_log_path do
+    case :logger.get_handler_config(@handler) do
+      {:ok, %{config: %{file: file}}} -> to_string(file)
+      _ -> nil
+    end
+  end
+
   @doc "Force a filesync so the rule-gen agent reads a complete log."
   def filesync do
     if handler_present?(), do: :logger_std_h.filesync(@handler)
@@ -110,7 +153,21 @@ defmodule Cev.RowLog do
     src = log_path(index)
     dest = Path.join(dest_dir, "#{index}.log")
     if File.exists?(src), do: File.rename!(src, dest)
+    move_sidecars(index, dest_dir)
     dest
+  end
+
+  # Sidecars follow their log into the outcome dir. Without this a finished row
+  # keeps its prose log and loses its structured hand-off, which is exactly the
+  # asymmetry H12 set out to remove.
+  defp move_sidecars(index, dest_dir) do
+    Path.rootname(log_path(index))
+    |> Kernel.<>(".*")
+    |> Path.wildcard()
+    |> Enum.reject(&String.ends_with?(&1, ".log"))
+    |> Enum.each(fn src ->
+      File.rename!(src, Path.join(dest_dir, Path.basename(src)))
+    end)
   end
 
   defp add_handler(path) do

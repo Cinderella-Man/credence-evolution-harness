@@ -19,6 +19,27 @@ defmodule Cev.AppliedRules do
 
   @type entry :: {module(), non_neg_integer() | :reverted}
 
+  @doc """
+  Entries for row `index`, preferring the sidecar over the log.
+
+  The sidecar (`logs/<index>.applied_rules`, written by the validator) is the
+  contract; parsing the row log is the fallback for rows produced before it
+  existed. Both go through the same `parse/1`, so a sidecar cannot drift into a
+  different format than the log.
+  """
+  @spec for_row(term()) :: [entry()]
+  def for_row(index) do
+    sidecar = Cev.RowLog.sidecar(index, "applied_rules")
+
+    case File.read(sidecar) do
+      {:ok, contents} -> parse(contents)
+      {:error, _} -> index |> Cev.RowLog.path() |> File.read() |> then(&parse_result/1)
+    end
+  end
+
+  defp parse_result({:ok, log}), do: parse(log)
+  defp parse_result({:error, _}), do: []
+
   @spec parse(String.t()) :: [entry()]
   def parse(log) when is_binary(log) do
     log
