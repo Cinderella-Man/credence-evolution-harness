@@ -36,6 +36,7 @@ defmodule Cev.Classify do
 
   alias Cev.{AppliedRules, Credence, Distill, LLM, RulePaths}
   alias Cev.Classify.{Parser, Prompt, Spec, Verdicts}
+  alias Cev.Premise
   alias Cev.Evolve.Ledger
 
   @snake ~r/^[a-z][a-z0-9_]*$/
@@ -174,7 +175,11 @@ defmodule Cev.Classify do
     with :ok <- require_phase(s.phase),
          :ok <- require_snake(s.proposed_name),
          :ok <- require_before(s),
-         :ok <- require_after(s) do
+         :ok <- require_after(s),
+         # T4.2e. One compile, before an ~80-turn implementer run is spent on a
+         # premise that cannot be true. See `Cev.Premise` for what it does and
+         # does not claim to check.
+         :ok <- Premise.check(s.phase, s.before) do
       check_assumptions(s.assumptions, ctx)
     end
   end
