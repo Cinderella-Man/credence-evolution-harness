@@ -473,8 +473,14 @@ defmodule Cev.Classify.Prompt do
     #{closed_set_block(closed)}
     These rules ALREADY engaged on this row — Credence handled what they target.
     Do NOT propose a POTENTIAL_NEW_RULE for an idiom one of them already fixes;
-    that is already covered. (If such a rule MIS-fired or under-fired, that's a
-    BUGFIX_RULE, not a new rule.)
+    that is already covered. If such a rule MIS-fired — it engaged and did the
+    wrong thing — that IS a BUGFIX_RULE, and the trace above is your evidence.
+
+    A rule that did NOT fire cannot be a BUGFIX_RULE on this row. BUGFIX_RULE is
+    validated against this closed set, so naming a rule that is absent from it is
+    rejected however true the observation is. There is no evidence to hand an
+    implementer either: the whole case rests on a trace that does not exist.
+    Report NO_ACTION.
 
     ## Dead-ends already tried (do NOT re-propose)
     #{ledger_block(Keyword.get(opts, :ledger, ""))}
