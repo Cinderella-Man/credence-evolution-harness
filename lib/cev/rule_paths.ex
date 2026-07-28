@@ -35,11 +35,55 @@ defmodule Cev.RulePaths do
         {:ok, %{module: module, phase: phase, rule_path: rel, test_paths: tests}}
 
       [] ->
-        {:error, {:not_found, modname}}
+        # Fall back to the file BASENAME. The model gets the phase wrong far more
+        # often than it gets the rule wrong — `Credence.Pattern.FixDivRem` for a
+        # rule that lives in `lib/syntax/` — and the module name embeds the phase,
+        # so the grep above cannot find it (docs/22 T4.3, ledger row 95). The
+        # basename is the part it had right, and it is unique across phases.
+        #
+        # Resolved from the file directly rather than by re-entering `resolve/2`:
+        # the fallback derives its answer from the same file it would search for,
+        # so a recursive call that missed again would loop forever on it.
+        case by_basename(modname, clone) do
+          {:ok, real, rel} -> {:ok, describe(real, rel, clone)}
+          :error -> {:error, {:not_found, modname}}
+        end
 
       many ->
         {:error, {:ambiguous, modname, many}}
     end
+  end
+
+  # The rule whose FILE matches the last segment of `modname`, whatever phase it
+  # actually lives in. Only accepted when exactly one file matches and it really
+  # does define a module: a guess that resolves to two candidates is not a repair,
+  # and reading the name out of the file means the answer is the tree's, not ours.
+  defp by_basename(modname, clone) do
+    snake = modname |> String.split(".") |> List.last() |> Macro.underscore()
+
+    case Path.wildcard(Path.join(clone, "lib/*/#{snake}.ex")) do
+      [abs] ->
+        case Regex.run(~r/^defmodule\s+([A-Za-z0-9_.]+)\s+do\s*$/m, File.read!(abs)) do
+          [_, real] -> {:ok, String.to_atom("Elixir." <> real), Path.relative_to(abs, clone)}
+          _ -> :error
+        end
+
+      _ ->
+        :error
+    end
+  end
+
+  # The same shape `resolve/2` returns for a grep hit, built from a known path.
+  defp describe(module, rel, clone) do
+    name = Path.basename(rel, ".ex")
+    phase = rel |> Path.dirname() |> Path.basename()
+
+    tests =
+      Path.join(clone, "test/#{phase}/#{name}*_test.exs")
+      |> Path.wildcard()
+      |> Enum.map(&Path.relative_to(&1, clone))
+
+    %{module: module, phase: phase, rule_path: rel, test_paths: tests}
   end
 
   # grep -rl returns clone-relative paths (cwd = clone). Exit 1 = no match.

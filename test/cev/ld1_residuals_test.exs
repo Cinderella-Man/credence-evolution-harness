@@ -131,4 +131,74 @@ defmodule Cev.LD1ResidualsTest do
       assert prompt =~ "that IS a BUGFIX_RULE"
     end
   end
+
+  # T4.3 / ledger row 95: the observation was right and the row was thrown away
+  # over a spelling.
+  describe "rule-name spellings the model actually emits" do
+    test "the path-ish form becomes a module name" do
+      assert Cev.Classify.Parser.normalize_rule_name("pattern/no_uniq_then_count") ==
+               "Credence.Pattern.NoUniqThenCount"
+    end
+
+    test "a full path with lib/ and .ex is normalised too" do
+      assert Cev.Classify.Parser.normalize_rule_name("lib/syntax/fix_div_rem.ex") ==
+               "Credence.Syntax.FixDivRem"
+    end
+
+    test "the requested form is left exactly as it is" do
+      assert Cev.Classify.Parser.normalize_rule_name("Credence.Pattern.NoUniqThenCount") ==
+               "Credence.Pattern.NoUniqThenCount"
+    end
+
+    test "an Elixir. prefix is not doubled" do
+      assert Cev.Classify.Parser.normalize_rule_name("Elixir.Credence.Pattern.Foo") ==
+               "Credence.Pattern.Foo"
+    end
+
+    # Only the three real phases are treated as phases. `foo/bar` is not a rule
+    # spelling and must not be silently turned into `Credence.Foo.Bar`, which
+    # would resolve to nothing and hide the real problem.
+    test "a two-segment name that is not a phase is left alone" do
+      assert Cev.Classify.Parser.normalize_rule_name("foo/bar") == "foo/bar"
+    end
+  end
+
+  describe "resolving a rule whose phase the model got wrong" do
+    @tag :tmp_dir
+    test "falls back to the file basename and reports the real module", %{tmp_dir: dir} do
+      File.mkdir_p!(Path.join(dir, "lib/syntax"))
+
+      File.write!(
+        Path.join(dir, "lib/syntax/fix_div_rem.ex"),
+        "defmodule Credence.Syntax.FixDivRem do\nend\n"
+      )
+
+      # The model named the Pattern phase; the rule lives in Syntax.
+      assert {:ok, info} = Cev.RulePaths.resolve(Credence.Pattern.FixDivRem, dir)
+      assert info.module == Credence.Syntax.FixDivRem
+      assert info.phase == "syntax"
+      assert info.rule_path == "lib/syntax/fix_div_rem.ex"
+    end
+
+    @tag :tmp_dir
+    test "a basename matching two files is not guessed at", %{tmp_dir: dir} do
+      for phase <- ["pattern", "syntax"] do
+        File.mkdir_p!(Path.join(dir, "lib/#{phase}"))
+
+        File.write!(
+          Path.join(dir, "lib/#{phase}/twin.ex"),
+          "defmodule Credence.#{String.capitalize(phase)}.Twin do\nend\n"
+        )
+      end
+
+      assert {:error, {:not_found, _}} = Cev.RulePaths.resolve(Credence.Semantic.Twin, dir)
+    end
+
+    @tag :tmp_dir
+    test "an unknown rule is still not found", %{tmp_dir: dir} do
+      File.mkdir_p!(Path.join(dir, "lib/pattern"))
+
+      assert {:error, {:not_found, _}} = Cev.RulePaths.resolve(Credence.Pattern.Ghost, dir)
+    end
+  end
 end

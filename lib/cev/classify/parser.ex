@@ -82,7 +82,46 @@ defmodule Cev.Classify.Parser do
   defp rule_name(m) do
     case blank_to_nil(m["RULE_NAME"]) do
       nil -> nil
-      raw -> :"Elixir.#{String.trim(raw) |> String.replace_prefix("Elixir.", "")}"
+      raw -> :"Elixir.#{normalize_rule_name(raw)}"
+    end
+  end
+
+  @phase_names ~w(pattern semantic syntax)
+
+  @doc """
+  Normalise the spellings the model actually emits into a module name.
+
+  The prompt asks for `Credence.Pattern.Foo`, and the model frequently answers
+  with the **path-ish** form it has just been reading — `pattern/no_uniq_then_count`
+  — which used to become the atom `:"Elixir.pattern/no_uniq_then_count"` and then
+  fail resolution as `{:not_found, _}` (docs/22 T4.3, ledger row 95). The
+  observation was right and the row was thrown away over a spelling.
+
+      iex> Cev.Classify.Parser.normalize_rule_name("pattern/no_uniq_then_count")
+      "Credence.Pattern.NoUniqThenCount"
+
+      iex> Cev.Classify.Parser.normalize_rule_name("Credence.Pattern.NoUniqThenCount")
+      "Credence.Pattern.NoUniqThenCount"
+
+      iex> Cev.Classify.Parser.normalize_rule_name("lib/syntax/fix_a.ex")
+      "Credence.Syntax.FixA"
+  """
+  @spec normalize_rule_name(String.t()) :: String.t()
+  def normalize_rule_name(raw) do
+    raw
+    |> String.trim()
+    |> String.replace_prefix("Elixir.", "")
+    |> String.replace_prefix("lib/", "")
+    |> String.replace_suffix(".ex", "")
+    |> case do
+      name ->
+        case String.split(name, "/") do
+          [phase, snake] when phase in @phase_names ->
+            "Credence." <> Macro.camelize(phase) <> "." <> Macro.camelize(snake)
+
+          _ ->
+            name
+        end
     end
   end
 
