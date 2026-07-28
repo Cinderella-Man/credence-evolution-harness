@@ -47,14 +47,18 @@ defmodule Cev.ImplementTest do
       ===END===
       """
 
-      assert {:ok, %{rule: rule}} = Output.parse(emit, mode: :new, phase: :pattern, assumptions?: false)
+      assert {:ok, %{rule: rule}} =
+               Output.parse(emit, mode: :new, phase: :pattern, assumptions?: false)
+
       refute rule =~ "```"
       assert {:ok, _} = Code.string_to_quoted(rule)
     end
 
     test "pattern missing EQUIVALENCE_TEST is rejected" do
       emit = "===RULE===\nx\n===CHECK_TEST===\nx\n===FIX_TEST===\nx\n===END==="
-      assert {:error, :pattern_missing_equivalence_test} = Output.parse(emit, mode: :new, phase: :pattern, assumptions?: false)
+
+      assert {:error, :pattern_missing_equivalence_test} =
+               Output.parse(emit, mode: :new, phase: :pattern, assumptions?: false)
     end
 
     test "syntax WITH an equivalence test is rejected" do
@@ -69,7 +73,9 @@ defmodule Cev.ImplementTest do
 
     test "no-promise pattern with a stray PROPERTY_TEST is rejected" do
       emit = @pattern_emit |> String.replace("===END===", "===PROPERTY_TEST===\nx\n===END===")
-      assert {:error, :no_promise_has_property_test} = Output.parse(emit, mode: :new, phase: :pattern, assumptions?: false)
+
+      assert {:error, :no_promise_has_property_test} =
+               Output.parse(emit, mode: :new, phase: :pattern, assumptions?: false)
     end
   end
 
@@ -85,15 +91,22 @@ defmodule Cev.ImplementTest do
       """
 
       assert {:ok, %{rule: _, tests: tests}} =
-               Output.parse(emit, mode: :bugfix, test_glob: ["test/pattern/no_foo_check_test.exs"])
+               Output.parse(emit,
+                 mode: :bugfix,
+                 test_glob: ["test/pattern/no_foo_check_test.exs"]
+               )
 
       assert Map.has_key?(tests, "test/pattern/no_foo_check_test.exs")
     end
 
     test "rejects a test path outside the glob (no new/renamed files)" do
       emit = "===RULE===\nx\n===TEST:test/pattern/sneaky_test.exs===\nx\n===END==="
+
       assert {:error, {:test_path_out_of_glob, "test/pattern/sneaky_test.exs"}} =
-               Output.parse(emit, mode: :bugfix, test_glob: ["test/pattern/no_foo_check_test.exs"])
+               Output.parse(emit,
+                 mode: :bugfix,
+                 test_glob: ["test/pattern/no_foo_check_test.exs"]
+               )
     end
   end
 
@@ -102,7 +115,12 @@ defmodule Cev.ImplementTest do
       ctx = %{
         mode: :new,
         phase: :pattern,
-        spec: %{before: "defmodule B do\nend", after: "defmodule A do\nend", rationale: "x", assumptions: []},
+        spec: %{
+          before: "defmodule B do\nend",
+          after: "defmodule A do\nend",
+          rationale: "x",
+          assumptions: []
+        },
         scaffold_files: %{"lib/pattern/no_foo.ex" => "defmodule Credence.Pattern.NoFoo do\nend"},
         ast_before: "{:defmodule, ...}",
         ast_after: "{:defmodule, ...}",
@@ -124,7 +142,12 @@ defmodule Cev.ImplementTest do
       ctx = %{
         mode: :new,
         phase: :pattern,
-        spec: %{before: "defmodule B do\nend", after: "defmodule A do\nend", rationale: "x", assumptions: []},
+        spec: %{
+          before: "defmodule B do\nend",
+          after: "defmodule A do\nend",
+          rationale: "x",
+          assumptions: []
+        },
         scaffold: %{phase: :pattern, snake: "no_foo"},
         scaffold_files: %{"lib/pattern/no_foo.ex" => "defmodule Credence.Pattern.NoFoo do\nend"},
         ast_before: "a",
@@ -148,7 +171,12 @@ defmodule Cev.ImplementTest do
       ctx = %{
         mode: :new,
         phase: :pattern,
-        spec: %{before: "defmodule B do\nend", after: "defmodule A do\nend", rationale: "x", assumptions: []},
+        spec: %{
+          before: "defmodule B do\nend",
+          after: "defmodule A do\nend",
+          rationale: "x",
+          assumptions: []
+        },
         scaffold: %{phase: :pattern, snake: "no_foo"},
         scaffold_files: %{"lib/pattern/no_foo.ex" => "defmodule Credence.Pattern.NoFoo do\nend"},
         ast_before: "a",
@@ -248,6 +276,7 @@ defmodule Cev.ImplementTest do
       on_exit(fn ->
         for suffix <- ["", "2", "3"] do
           File.rm(Path.join(clone, "lib/pattern/#{base}#{suffix}.ex"))
+
           for k <- ~w(check fix equivalence),
               do: File.rm(Path.join(clone, "test/pattern/#{base}#{suffix}_#{k}_test.exs"))
         end
@@ -280,6 +309,7 @@ defmodule Cev.ImplementTest do
       on_exit(fn ->
         Enum.each(sc.paths, fn rel -> File.rm(Path.join(clone, rel)) end)
       end)
+
       assert sc.module == :"Elixir.Credence.Pattern.NoCevScaffoldProbe"
       # Pattern → 4 files incl. the equivalence test.
       assert Enum.any?(sc.paths, &String.ends_with?(&1, "_equivalence_test.exs"))

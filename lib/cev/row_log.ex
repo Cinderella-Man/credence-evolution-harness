@@ -23,6 +23,9 @@ defmodule Cev.RowLog do
     * `close/1`      — delete the log (ordinary success / no_opportunity)
     * `escalate/1`   — move to `logs/escalated/<index>.log` (dead-end / phantom / reject)
     * `commit/1`     — move to `logs/committed/<index>.log` (rule landed)
+    * `gate_environmental/1` — move to `logs/gate_environmental/<index>.log`
+      (the Gate's `mix test` crashed before running; the candidate was never
+      judged, so this is NOT a reject and NOT a dead-end)
   """
 
   alias Cev.Config
@@ -31,7 +34,7 @@ defmodule Cev.RowLog do
 
   # Classifier-split outcome dirs (07 §8), all nested UNDER logs/. Nothing is
   # deleted — every outcome MOVES the log to its dir (08 T6.2/T6.5).
-  @outcome_dirs ~w(escalated committed no_action duplicate behaviour_diverged switch_proposals classifier_errors transient too_slow)
+  @outcome_dirs ~w(escalated committed no_action duplicate behaviour_diverged switch_proposals classifier_errors transient too_slow gate_environmental)
 
   @doc "Create the run-scoped log dirs (logs/ + every outcome subfolder). Safe at boot."
   def ensure_ready do
@@ -143,6 +146,18 @@ defmodule Cev.RowLog do
 
   @doc "Move to `logs/too_slow/` (gave up after `transient_row_limit` timeouts — row consumed)."
   def too_slow(index), do: move(index, outcome_path("too_slow"))
+
+  @doc """
+  Move to `logs/gate_environmental/` (H9 — the Gate's `mix test` never ran).
+
+  Distinct from `escalate/1` on purpose. `escalated/` means the Gate ruled
+  against the candidate; this means the Gate could not rule at all, because the
+  test runner crashed before ExUnit produced a summary. The candidate's staged
+  diff is written into this same dir by `Cev.Evolve.Gate.persist_environmental/2`
+  so the row can be re-judged by hand instead of being discarded on a verdict
+  that was never reached.
+  """
+  def gate_environmental(index), do: move(index, outcome_path("gate_environmental"))
 
   # ── Internal ────────────────────────────────────────────────────────
 

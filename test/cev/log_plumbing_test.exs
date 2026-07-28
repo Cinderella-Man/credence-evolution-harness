@@ -49,15 +49,20 @@ defmodule Cev.LogPlumbingTest do
     end
 
     test "reverted/1 extracts only :reverted culprits" do
-      entries = AppliedRules.parse("APPLIED_RULES: [{Credence.Pattern.A, 1}, {Credence.Pattern.B, :reverted}]")
+      entries =
+        AppliedRules.parse(
+          "APPLIED_RULES: [{Credence.Pattern.A, 1}, {Credence.Pattern.B, :reverted}]"
+        )
+
       assert AppliedRules.reverted(entries) == [:"Elixir.Credence.Pattern.B"]
     end
 
     test "modules/1 is the unique closed set" do
-      entries = AppliedRules.parse("""
-      APPLIED_RULES: [{Credence.Pattern.A, 1}]
-      APPLIED_RULES: [{Credence.Pattern.A, 2}, {Credence.Pattern.C, 1}]
-      """)
+      entries =
+        AppliedRules.parse("""
+        APPLIED_RULES: [{Credence.Pattern.A, 1}]
+        APPLIED_RULES: [{Credence.Pattern.A, 2}, {Credence.Pattern.C, 1}]
+        """)
 
       assert Enum.sort(AppliedRules.modules(entries)) ==
                Enum.sort([:"Elixir.Credence.Pattern.A", :"Elixir.Credence.Pattern.C"])
@@ -70,7 +75,12 @@ defmodule Cev.LogPlumbingTest do
       clone = Path.join(System.tmp_dir!(), "cev_rulepaths_#{System.unique_integer([:positive])}")
       File.mkdir_p!(Path.join(clone, "lib/pattern"))
       File.mkdir_p!(Path.join(clone, "test/pattern"))
-      File.write!(Path.join(clone, "lib/pattern/no_foo.ex"), "defmodule Credence.Pattern.NoFoo do\nend\n")
+
+      File.write!(
+        Path.join(clone, "lib/pattern/no_foo.ex"),
+        "defmodule Credence.Pattern.NoFoo do\nend\n"
+      )
+
       File.write!(Path.join(clone, "test/pattern/no_foo_check_test.exs"), "x")
       File.write!(Path.join(clone, "test/pattern/no_foo_fix_test.exs"), "x")
       on_exit(fn -> File.rm_rf!(clone) end)
@@ -86,7 +96,8 @@ defmodule Cev.LogPlumbingTest do
     end
 
     test "errors on a module with no source file", %{clone: clone} do
-      assert {:error, {:not_found, _}} = RulePaths.resolve(:"Elixir.Credence.Pattern.Ghost", clone)
+      assert {:error, {:not_found, _}} =
+               RulePaths.resolve(:"Elixir.Credence.Pattern.Ghost", clone)
     end
   end
 end

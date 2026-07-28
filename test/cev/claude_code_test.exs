@@ -22,6 +22,7 @@ defmodule Cev.ClaudeCodeTest do
 
     test "max-turns subtype overrides to gave_up" do
       text = "DECISION: add a rule"
+
       assert {:gave_up, "max turns reached"} =
                ClaudeCode.parse_decision(text, "error_max_turns", false)
     end

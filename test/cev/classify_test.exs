@@ -114,7 +114,9 @@ defmodule Cev.ClassifyTest do
 
   describe "Prompt" do
     test "system prompt is compact; canonical blocks injected verbatim" do
-      reg = [%{name: :single_codepoint_graphemes, default: true, summary: "single-codepoint chars"}]
+      reg = [
+        %{name: :single_codepoint_graphemes, default: true, summary: "single-codepoint chars"}
+      ]
 
       user =
         Prompt.build(
@@ -138,7 +140,15 @@ defmodule Cev.ClassifyTest do
     end
 
     test "phase taxonomy is injected verbatim (docs/10 Fix 3)" do
-      user = Prompt.build(distilled_log: "x", closed_set: [], ledger: "", assumptions: [], solve_outcome: :failed)
+      user =
+        Prompt.build(
+          distilled_log: "x",
+          closed_set: [],
+          ledger: "",
+          assumptions: [],
+          solve_outcome: :failed
+        )
+
       assert user =~ Prompt.phase_taxonomy()
       assert user =~ "Choosing PHASE"
       assert user =~ "NEVER pattern"
@@ -160,13 +170,18 @@ defmodule Cev.ClassifyTest do
 
     setup do
       # avoid shelling for the registry
-      Cev.Credence.put_assumptions([%{name: :single_codepoint_graphemes, default: true, summary: "x"}])
+      Cev.Credence.put_assumptions([
+        %{name: :single_codepoint_graphemes, default: true, summary: "x"}
+      ])
+
       :ok
     end
 
     test "valid NO_ACTION passes" do
       out = "===DECISION===\nNO_ACTION\n===RATIONALE===\nidiomatic\n===END==="
-      assert {:ok, %Spec{decision: :no_action}} = Classify.run("log", :solved, llm: llm_returning(out), closed_set: [], ledger: "")
+
+      assert {:ok, %Spec{decision: :no_action}} =
+               Classify.run("log", :solved, llm: llm_returning(out), closed_set: [], ledger: "")
     end
 
     test "POTENTIAL_NEW_RULE with a missing after is rejected then errors after re-ask" do

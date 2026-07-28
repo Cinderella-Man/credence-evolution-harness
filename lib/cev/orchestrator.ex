@@ -121,7 +121,12 @@ defmodule Cev.Orchestrator do
         state
 
       {:cont, n} ->
-        if n > 0, do: Logger.warning("[Orchestrator] transient_abort streak #{n}/#{state.transient_storm_limit}")
+        if n > 0,
+          do:
+            Logger.warning(
+              "[Orchestrator] transient_abort streak #{n}/#{state.transient_storm_limit}"
+            )
+
         %{state | consecutive_transient: n}
     end
   end
@@ -191,7 +196,10 @@ defmodule Cev.Orchestrator do
 
     write_row_stat(
       state,
-      Map.merge(%{index: idx, ts: System.os_time(:second), elapsed_s: elapsed, cost_est: cost_est}, stat)
+      Map.merge(
+        %{index: idx, ts: System.os_time(:second), elapsed_s: elapsed, cost_est: cost_est},
+        stat
+      )
     )
 
     Logger.info("[idx=#{idx}] finished in #{elapsed}s (est $#{cost_est})")
@@ -263,7 +271,28 @@ defmodule Cev.Orchestrator do
   defp solve_attempts({:ok, sr}), do: sr[:attempts]
   defp solve_attempts({:failed, info}), do: info[:attempts]
 
-  defp rg_outcome(%{outcome: o}), do: o
+  defp rg_outcome(%{outcome: o}), do: row_outcome(o)
+
+  @doc false
+  # Make a Router outcome JSON-safe for `rows.jsonl` (exposed for tests).
+  #
+  # `rows.jsonl` is written with `Jason.encode!/1`, and Jason cannot encode a
+  # tuple. The Router's reject outcome IS a tuple — `{:rejected, reason}` — so
+  # every Gate rejection raised `Protocol.UndefinedError` inside
+  # `write_row_stat/2`, was swallowed by `run_row/2`'s rescue, and was booked as
+  # the contentless `{"index":N,"outcome":"exception"}` with the task name,
+  # decision, cost, elapsed time AND the reject reason all erased. Measured on
+  # the live ledger: 21 such rows, and ZERO `"rulegen":"rejected"` lines — e.g.
+  # row 2's log ends at `[Gate] REJECT: :full_suite_red — discarding` (22:37:31)
+  # and `rows.jsonl` records `{"index":2,"outcome":"exception","ts":1783802251}`
+  # (= 22:37:31 CEST) for it.
+  #
+  # Atoms pass through unchanged so the `:transient_abort` comparison in
+  # `breaker_step/3` and the atom outcomes in `Mix.Tasks.Cev.Usage` are
+  # untouched; anything else is inspected into a string, which `to_string/1` in
+  # the usage task already accepts.
+  def row_outcome(o) when is_atom(o), do: o
+  def row_outcome(o), do: inspect(o)
 
   defp rg_decision(%{decision: d}) when not is_nil(d), do: inspect(d)
   defp rg_decision(_), do: nil

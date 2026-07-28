@@ -14,7 +14,9 @@ defmodule Cev.SanityGateTest do
   end
 
   test "verdict store round-trips and reloads from disk (survives restart)" do
-    path = Path.join(System.tmp_dir!(), "cev_verdicts_#{System.unique_integer([:positive])}.jsonl")
+    path =
+      Path.join(System.tmp_dir!(), "cev_verdicts_#{System.unique_integer([:positive])}.jsonl")
+
     on_exit(fn -> File.rm_rf!(path) end)
 
     {:ok, pid} = SanityGate.start_link(name: :sg_a, path: path)

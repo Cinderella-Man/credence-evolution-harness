@@ -12,7 +12,7 @@ defmodule Cev.Evolve.Gate do
                                    file(s), assert RED (incl. compile-error =
                                    RED), then restore
     (a) full suite green         — last; the slow one, itself fail-fast in two
-                                   phases. FIRST `mix test --exclude corpus` (~15s):
+                                   phases. FIRST `mix test --exclude corpus` (~2min):
                                    all meta + cross-rule invariants (DSL-safety,
                                    equivalence/fix/check-meta, scope-parity) — a red
                                    here is a plain `:full_suite_red`, rejected
@@ -32,14 +32,79 @@ defmodule Cev.Evolve.Gate do
   **Standalone pure deletion is rejected + escalated** — removing a rule is a
   human-only decision.
 
-  Returns `{:ok, summary}` (caller commits) or `{:reject, reason}` (Gate has
-  already discarded the working tree via `reset --hard HEAD` + `clean -fd`).
+  ## Environmental triage in the suite phases (H9)
+
+  A non-zero `mix test` exit used to mean exactly one thing here: "suite red".
+  It does not. Row 2 of the escalated ledger is the counter-example — `mix test
+  --exclude corpus` died inside `Kernel.ParallelCompiler` with
+  `:io.put_chars(:standard_error, …) → :terminated` after 4.7s having run **zero
+  tests**, and the Gate logged `REJECT: :full_suite_red` and discarded a
+  candidate that had already passed the mutation gate and whose implementer had
+  run the same command 4 minutes earlier with 7309 tests passing.
+
+  So each suite phase is now triaged on **evidence that the suite ran**, never
+  on wall-clock (a duration threshold is a guess that rots as the suite grows):
+
+    * `:green`       — exit 0.
+    * `:red`         — non-zero AND the run produced a *verdict*: either ExUnit
+                       reached `:suite_finished` (`Finished in …`) or the tree
+                       failed to compile (`== Compilation error in file …`).
+                       A candidate whose code does not compile is a real reject.
+    * `:did_not_run` — non-zero with neither. The runner crashed; nothing was
+                       learned about the candidate.
+
+  `:did_not_run` retries the phase **once** (row 2's tree was green minutes
+  earlier, so a retry is the cheapest path back to a real verdict). If the suite
+  still never runs, the Gate returns `{:reject, {:environmental, detail}}`
+  instead of `:full_suite_red`, and the candidate's staged diff travels inside
+  `detail` so the caller can preserve it — see `persist_environmental/2`. This
+  is deliberately NOT a merit verdict: the caller must not book it as a
+  dead-end.
+
+  Returns `{:ok, summary}` or `{:reject, reason}` (Gate has already discarded
+  the working tree via `reset --hard HEAD` + `clean -fd`).
   """
 
   require Logger
 
   alias Cev.Config
   alias Cev.Evolve.Corpus
+  alias Cev.RowLog
+
+  # Positive evidence that ExUnit reached `:suite_finished` — i.e. the suite RAN.
+  #
+  # Emitted by `ExUnit.Formatter.format_times/1`, which is called by the stock
+  # `ExUnit.CLIFormatter` *and* by Credence's own `Credence.QuietFormatter`
+  # (test/support/quiet_formatter.ex:92 — `test_helper.exs` swaps the formatter
+  # out, so anything keyed on CLIFormatter specifically would be wrong here).
+  # It is printed even when zero tests matched the filters, and it is the one
+  # line the formatter never colorizes, so it survives `IO.ANSI.enabled?`.
+  #
+  # Deliberately NOT the counts line: Elixir 1.20 replaced CLIFormatter's
+  # `2 doctests, 3 tests, 1 failure` with `Result: 3/4 passed (…)`, whereas
+  # `Finished in <digits>` is byte-identical on 1.19 and 1.20 — and
+  # QuietFormatter colorizes the counts line, so `^\d+ tests` would not even
+  # anchor on a tty.
+  @suite_finished ~r/^\s*Finished in \d/m
+
+  # The other way a non-zero exit is a real verdict: the tree does not compile.
+  # Mix prints this banner for `lib/` *and* `test/` compile failures
+  # (TokenMissingError, CompileError, and an UndefinedFunctionError raised at
+  # module-compile time), and a candidate whose code does not compile is a
+  # genuine REJECT, not an environmental blip. The `--warnings-as-errors`
+  # alternative is included so that turning that flag on in `mix.exs` later
+  # cannot silently reroute every warning failure into the environmental lane.
+  #
+  # Row 2's crash printed only *warnings* plus an `ErlangError`, so neither
+  # pattern matches it — which is the whole point.
+  @compile_failed ~r/^\s*(== Compilation error in file |Compilation failed due to warnings)/m
+
+  # One retry per suite phase. More than one is guesswork; zero loses exactly
+  # the candidate this triage exists to save.
+  @suite_retries 1
+
+  # How much of the failing output to keep in the maintainer report.
+  @tail_chars 4_000
 
   @doc "Run the contract against the (already-dirty) clone. `clone` defaults to config."
   def check(clone \\ Config.credence_clone()) do
@@ -56,6 +121,18 @@ defmodule Cev.Evolve.Gate do
          :ok <- check_full_suite(clone) do
       {:ok, summarize(entries)}
     else
+      # An environmental failure is NOT a rejection of the candidate — the
+      # candidate was never judged. Logged distinctly so `REJECT:` in the row
+      # log keeps meaning "the Gate ruled against this rule".
+      {:reject, {:environmental, _} = reason} ->
+        Logger.error(
+          "[Gate] ENVIRONMENTAL: #{reject_label(reason)} — discarding the tree, " <>
+            "but the candidate's patch is preserved (it was never judged)"
+        )
+
+        discard(clone)
+        {:reject, reason}
+
       {:reject, reason} ->
         Logger.warning("[Gate] REJECT: #{reject_label(reason)} — discarding")
         discard(clone)
@@ -67,6 +144,10 @@ defmodule Cev.Evolve.Gate do
   # log line compact; the full detail is written to `escalated/` by the caller.
   defp reject_label({:corpus, kind, %{new: new, gone: gone}}),
     do: "corpus #{kind} (#{length(new)} new, #{length(gone)} gone)"
+
+  defp reject_label({:environmental, %{phase: phase}}),
+    do:
+      "#{phase} suite never ran (no ExUnit summary, no compile error) after #{@suite_retries + 1} attempts"
 
   defp reject_label(reason), do: inspect(reason)
 
@@ -130,6 +211,14 @@ defmodule Cev.Evolve.Gate do
 
   # ── (d) mutation check ──────────────────────────────────────────────
 
+  # NOTE (H9 scope boundary): this check is deliberately left on the raw exit
+  # code. Its RED expectation is legitimately satisfied by a *compile* failure
+  # (reverting `lib/` deletes the new rule module the new test references), so
+  # "no ExUnit summary" is the normal case here, not a signal. Its reject
+  # direction is already sound — `mix test` cannot exit 0 without having run —
+  # so the only hole is a crashed runner reading as a spurious mutation PASS.
+  # Closing that needs a different discriminator than the one this item is
+  # evidence-backed for; see the residual-risk note in the H9 hand-off.
   defp check_mutation(clone, entries) do
     lib_files = added_or_modified(entries, "lib/")
     test_files = added_or_modified(entries, "test/")
@@ -183,29 +272,42 @@ defmodule Cev.Evolve.Gate do
   # ── (a) full suite ──────────────────────────────────────────────────
 
   defp check_full_suite(clone) do
-    cond do
-      # Fail-fast: the corpus-free suite (all meta + cross-rule invariants —
-      # DSL-safety, equivalence/fix/check-meta, scope-parity) runs in ~15s and
-      # catches every non-corpus reject BEFORE the ~8-min over-firing corpus scan.
-      # A red here is definitionally non-corpus → a plain `:full_suite_red`.
-      run_tests(clone, [], ["--exclude", "corpus"]) != 0 ->
+    # Fail-fast: the corpus-free suite (all meta + cross-rule invariants —
+    # DSL-safety, equivalence/fix/check-meta, scope-parity) catches every
+    # non-corpus reject BEFORE the ~4-min over-firing corpus scan. A red here is
+    # definitionally non-corpus → a plain `:full_suite_red`.
+    case suite_phase(clone, :non_corpus) do
+      {:did_not_run, out} ->
+        {:reject, environmental(clone, :non_corpus, out)}
+
+      {:red, _out} ->
         Logger.info("[Gate] corpus-free suite RED — rejecting before the corpus scan")
         {:reject, :full_suite_red}
 
-      # Phase 2 runs `--only corpus`, not the whole suite: the corpus-free half
-      # already passed above, so re-running it is pure duplication. That
-      # duplication used to cost ~13s (docs/13 P5); the suite has since grown to
-      # ~120s non-corpus, so this now saves ~2 minutes per candidate — and it
-      # makes the corpus phase separately timeable in the Gate log.
-      #
-      # It also turns the inference below into a fact. Before, "a full-suite red
-      # IS the corpus" was reasoning from the previous phase having passed; now
-      # only corpus tests ran, so a red here is a corpus red by construction.
-      #
-      # Capture the agent's diff BEFORE classification touches the snapshot, so a
-      # corpus-only reject (over-fire to drop / narrowing to accept) is preserved
-      # + re-appliable by the maintainer instead of silently discarded.
-      run_tests(clone, [], ["--only", "corpus"]) != 0 ->
+      {:green, _out} ->
+        check_corpus(clone)
+    end
+  end
+
+  # Phase 2 runs `--only corpus`, not the whole suite: the corpus-free half
+  # already passed above, so re-running it is pure duplication. That
+  # duplication used to cost ~13s (docs/13 P5); the suite has since grown to
+  # ~120s non-corpus, so this now saves ~2 minutes per candidate — and it
+  # makes the corpus phase separately timeable in the Gate log.
+  #
+  # It also turns the inference below into a fact. Before, "a full-suite red
+  # IS the corpus" was reasoning from the previous phase having passed; now
+  # only corpus tests ran, so a red here is a corpus red by construction.
+  #
+  # Capture the agent's diff BEFORE classification touches the snapshot, so a
+  # corpus-only reject (over-fire to drop / narrowing to accept) is preserved
+  # + re-appliable by the maintainer instead of silently discarded.
+  defp check_corpus(clone) do
+    case suite_phase(clone, :corpus) do
+      {:did_not_run, out} ->
+        {:reject, environmental(clone, :corpus, out)}
+
+      {:red, _out} ->
         patch = staged_patch(clone)
 
         case Corpus.classify_failure(clone) do
@@ -213,10 +315,131 @@ defmodule Cev.Evolve.Gate do
           detail -> {:reject, {:corpus, detail.kind, Map.put(detail, :patch, patch)}}
         end
 
-      true ->
+      {:green, _out} ->
         Logger.info("[Gate] full suite GREEN")
         :ok
     end
+  end
+
+  # Run one suite phase, retrying while the run produces NO verdict. The retry is
+  # what actually rescues the candidate: row 2's tree was green when its own
+  # implementer ran the identical command 4 minutes earlier, so a second run
+  # would very likely have committed the rule instead of discarding it.
+  defp suite_phase(clone, phase, attempts_left \\ @suite_retries) do
+    {verdict, out} = attempt(clone, phase)
+
+    cond do
+      verdict != :did_not_run ->
+        {verdict, out}
+
+      attempts_left > 0 ->
+        Logger.warning(
+          "[Gate] #{phase}: mix test exited non-zero but the suite NEVER RAN " <>
+            "(no ExUnit `Finished in` line, no compile error) — environmental; retrying"
+        )
+
+        suite_phase(clone, phase, attempts_left - 1)
+
+      true ->
+        Logger.error(
+          "[Gate] #{phase}: suite never ran on any attempt — environmental failure, " <>
+            "NOT a verdict on the candidate"
+        )
+
+        {:did_not_run, out}
+    end
+  end
+
+  defp attempt(clone, phase) do
+    {code, out} = run_tests_traced(clone, [], phase_args(phase))
+    {suite_verdict(code, out), out}
+  end
+
+  @doc false
+  # Pure triage of ONE `mix test` invocation (exposed for tests — the whole
+  # point of H9 is that this decision is testable without a live suite).
+  #
+  #   :green        — exit 0.
+  #   :red          — non-zero AND the run produced a verdict: ExUnit finished,
+  #                   or the tree failed to compile.
+  #   :did_not_run  — non-zero with NO evidence the suite ever ran. The
+  #                   environmental case (row 2: `:io.put_chars(:standard_error,
+  #                   …) → :terminated` inside `Kernel.ParallelCompiler`, 0 tests
+  #                   run, 4.7s against a ~2min baseline).
+  @spec suite_verdict(integer(), binary()) :: :green | :red | :did_not_run
+  def suite_verdict(0, _output), do: :green
+
+  def suite_verdict(_code, output) do
+    cond do
+      Regex.match?(@suite_finished, output) -> :red
+      Regex.match?(@compile_failed, output) -> :red
+      true -> :did_not_run
+    end
+  end
+
+  @doc false
+  # The `mix test` arguments for each suite phase (also quoted back to the
+  # maintainer in the environmental report, so the two cannot drift).
+  def phase_args(:non_corpus), do: ["--exclude", "corpus"]
+  def phase_args(:corpus), do: ["--only", "corpus"]
+
+  # The candidate was never judged, so its diff is preserved rather than lost
+  # with the tree — same principle as a corpus reject, different reason.
+  defp environmental(clone, phase, out) do
+    {:environmental, %{phase: phase, tail: tail(out), patch: staged_patch(clone)}}
+  end
+
+  defp tail(out) do
+    if String.length(out) > @tail_chars,
+      do: "…(truncated)…\n" <> String.slice(out, -@tail_chars, @tail_chars),
+      else: out
+  end
+
+  @doc """
+  Preserve a `{:environmental, detail}` Gate outcome for the maintainer and
+  return a COMPACT reason (`{:environmental, phase}` — the patch and output tail
+  stripped from the term so the ledger/row stat stay small).
+
+  Writes `<index>.patch` (the candidate's staged diff, re-appliable) and
+  `<index>.environmental.md` (what failed and how to re-judge it) into
+  `logs/gate_environmental/`, where the row log is about to move. This is the
+  whole point of the triage: the candidate had already passed the mutation gate
+  and was never actually judged, so its work is kept rather than discarded.
+  """
+  @spec persist_environmental(term(), map()) :: {:environmental, atom()}
+  def persist_environmental(index, %{phase: phase, tail: tail, patch: patch}) do
+    dir = RowLog.outcome_path("gate_environmental")
+    File.mkdir_p!(dir)
+    File.write!(Path.join(dir, "#{index}.patch"), patch)
+    File.write!(Path.join(dir, "#{index}.environmental.md"), env_report(index, phase, tail))
+    {:environmental, phase}
+  end
+
+  defp env_report(index, phase, tail) do
+    """
+    # Gate environmental failure — row #{index}
+
+    Phase: **#{phase}** (`mix test #{Enum.join(phase_args(phase), " ")}`)
+
+    `mix test` exited non-zero WITHOUT ever running the suite: no ExUnit
+    `Finished in …` line and no `== Compilation error in file …` banner. That is
+    a crashed test runner, not a verdict on the candidate — so the Gate did NOT
+    book it as `:full_suite_red`. It re-ran the phase #{@suite_retries} more
+    time(s) and the suite still never ran.
+
+    The candidate had already passed the mutation gate, so its diff is preserved
+    here as `#{index}.patch` instead of being discarded with the tree.
+
+    ## To re-judge
+        cd #{Config.credence_clone()}
+        git apply #{Path.expand(Path.join(RowLog.outcome_path("gate_environmental"), "#{index}.patch"))}
+        mix test --exclude corpus && mix test --only corpus
+
+    ## Tail of the failing `mix test` output
+    ```
+    #{tail}
+    ```
+    """
   end
 
   defp staged_patch(clone) do
@@ -226,7 +449,16 @@ defmodule Cev.Evolve.Gate do
 
   # ── Git / test helpers ──────────────────────────────────────────────
 
-  defp run_tests(clone, files, extra \\ []) do
+  # Exit code only — the mutation check reads nothing but RED/GREEN.
+  defp run_tests(clone, files) do
+    {code, _out} = run_tests_traced(clone, files, [])
+    code
+  end
+
+  # Same invocation as `run_tests/3` but hands the captured output back, so a
+  # phase can be triaged on what `mix test` actually printed rather than on the
+  # exit code alone.
+  defp run_tests_traced(clone, files, extra) do
     args = extra ++ files
 
     {out, code} =
@@ -237,7 +469,7 @@ defmodule Cev.Evolve.Gate do
       )
 
     Logger.debug("[Gate] mix test #{inspect(args)} exit=#{code}\n#{out}")
-    code
+    {code, out}
   end
 
   defp tracked_in_head?(clone, rel) do

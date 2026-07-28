@@ -16,8 +16,16 @@ defmodule Cev.Evolve.Router do
                                                    ├─ REPAIR   → build (repair sub-mode) → Gate
                                                    └─ EQUIVALENT(minset) → build → Gate
 
+  Every `→ Gate` above has three exits, not two: `{:ok, _}` commits,
+  `{:reject, reason}` escalates as a merit reject, and
+  `{:reject, {:environmental, _}}` (H9) means the Gate's `mix test` crashed
+  before running a single test — the candidate was never judged, so it goes to
+  `gate_environmental/` with its patch preserved and writes NOTHING to the
+  dead-end ledger.
+
   The implementer (Phase 5) + Gate + outcome dirs are wired here. `classify`/
-  `implement` are injectable for testing (the LLM-driven stages).
+  `implement`/`gate` are injectable for testing (the LLM-driven stages, plus the
+  Gate itself, which otherwise needs a live clone + a ~6-minute suite).
 
   Returns `%{outcome, decision}` (the orchestrator logs it).
   """
@@ -187,7 +195,7 @@ defmodule Cev.Evolve.Router do
 
     case implement.(ctx) do
       {:ok, _result} ->
-        gate(index, decision_text, clone)
+        gate(index, decision_text, clone, opts)
 
       {:gave_up, reason} ->
         # A transient LLM timeout / fatal auth error is handled don't-consume /
@@ -257,13 +265,40 @@ defmodule Cev.Evolve.Router do
   defp rulegen_error_class({:cc, r}) when r in ["timeout", "idle_timeout"], do: :transient
   defp rulegen_error_class(_), do: :other
 
-  defp gate(index, decision_text, clone) do
-    case Gate.check(clone) do
+  defp gate(index, decision_text, clone, opts) do
+    check = Keyword.get(opts, :gate, &Gate.check/1)
+
+    case check.(clone) do
       {:ok, summary} ->
         :ok = Git.commit_and_push(index, summary, decision: decision_text)
         Cev.Workspace.recompile_credence()
         RowLog.commit(index)
         outcome(:committed, decision_text)
+
+      # H9: the Gate's `mix test` never ran (no ExUnit summary, no compile
+      # error), so nothing was learned about this candidate. It is NOT a merit
+      # reject, and it must not be treated as one:
+      #   * no `Ledger.gate_reject` — decisions.md is inlined verbatim into every
+      #     rule-gen prompt as the dead-end list, and a crashed test runner is not
+      #     a dead-end idea (same reasoning as the transient lane in `rulegen_abort`);
+      #   * the candidate's staged diff is written to `gate_environmental/` so a
+      #     maintainer can re-judge it instead of paying for another 80-turn
+      #     implementer run;
+      #   * the row IS consumed (the work is preserved on disk, so re-running the
+      #     whole row next pass would be pure waste) and lands in its own outcome
+      #     dir rather than in `escalated/`.
+      # The outcome is a BARE ATOM on purpose: `rows.jsonl` is JSON and `Jason`
+      # cannot encode a tuple (see `Cev.Orchestrator.row_outcome/1`).
+      {:reject, {:environmental, detail}} ->
+        {:environmental, phase} = Gate.persist_environmental(index, detail)
+
+        Logger.error(
+          "[Router] Gate ENVIRONMENTAL (#{phase} suite never ran) — candidate NOT judged; " <>
+            "patch preserved under gate_environmental/#{index}.patch"
+        )
+
+        RowLog.gate_environmental(index)
+        outcome(:gate_environmental, decision_text)
 
       {:reject, reason} ->
         # Gate already discarded the working tree. A corpus over-fire/narrowing
