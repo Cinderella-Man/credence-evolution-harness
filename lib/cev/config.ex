@@ -63,6 +63,16 @@ defmodule Cev.Config do
   @doc "Wall-clock timeout (seconds) for the validator's `mix test` step."
   def validator_test_timeout_s, do: Application.get_env(:cev, :validator_test_timeout_s, 60)
 
+  @doc """
+  Wall-clock cap for a `mix test` the Gate or the implementer shells out to.
+
+  Generous on purpose: the Gate's corpus phase measures ~4-8 min and the
+  non-corpus phase ~2 min, so this bounds a *hang* rather than pacing a slow
+  suite. A cap tight enough to be interesting would fail honest runs, and a
+  gate that fails honest runs gets disabled.
+  """
+  def gate_test_timeout_s, do: Application.get_env(:cev, :gate_test_timeout_s, 1800)
+
   # ── Implementer loop bounds (07 §5.5) ───────────────────────────────
   def rule_gen_max_retries, do: Application.get_env(:cev, :rule_gen_max_retries, 5)
   def rule_gen_input_ceiling, do: Application.get_env(:cev, :rule_gen_input_ceiling, 240_000)

@@ -256,14 +256,20 @@ defmodule Cev.Implement do
   end
 
   defp run_mix_test(clone, args) do
-    {out, code} =
-      System.cmd("mix", ["test" | args],
-        cd: clone,
-        stderr_to_stdout: true,
-        env: [{"MIX_ENV", "test"}]
-      )
+    case Cev.MixTest.run(clone, args) do
+      {:ok, 0, _out} ->
+        :pass
 
-    if code == 0, do: :pass, else: {:fail, out}
+      {:ok, _code, out} ->
+        {:fail, out}
+
+      # Reported as a failure so the implementer loop reacts, but labelled so the
+      # retry feedback says "the suite hung" rather than handing the model a
+      # truncated log to guess at. Routing it as environmental rather than merit
+      # is T4.5's scope, not this one's.
+      {:timeout, secs, out} ->
+        {:fail, out <> "\n[Implement] `mix test` exceeded the #{secs}s cap and was killed.\n"}
+    end
   end
 
   defp test_paths(%{mode: :new, scaffold: sc, clone: clone}) do

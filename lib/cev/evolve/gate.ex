@@ -192,7 +192,10 @@ defmodule Cev.Evolve.Gate do
 
   # ── (b)/(c) touches ─────────────────────────────────────────────────
 
-  defp check_touches(entries, prefix, reason) do
+  @doc false
+  # Public for contract tests (T4.6): these three decide a reject purely from the
+  # staged diff, with no clone and no suite, so they can be pinned directly.
+  def check_touches(entries, prefix, reason) do
     if Enum.any?(entries, fn e -> Enum.any?(e.paths, &under?(&1, prefix)) end),
       do: :ok,
       else: {:reject, reason}
@@ -200,7 +203,8 @@ defmodule Cev.Evolve.Gate do
 
   # ── (e) scope: only lib/ and test/ ──────────────────────────────────
 
-  defp check_scope(entries) do
+  @doc false
+  def check_scope(entries) do
     offending =
       entries
       |> Enum.flat_map(& &1.paths)
@@ -211,7 +215,8 @@ defmodule Cev.Evolve.Gate do
 
   # ── pure-deletion guard ─────────────────────────────────────────────
 
-  defp check_not_pure_deletion(entries) do
+  @doc false
+  def check_not_pure_deletion(entries) do
     lib_entries = Enum.filter(entries, fn e -> Enum.any?(e.paths, &under?(&1, "lib/")) end)
 
     if lib_entries != [] and Enum.all?(lib_entries, &(&1.status == "D")) do
@@ -256,7 +261,8 @@ defmodule Cev.Evolve.Gate do
     end
   end
 
-  defp snapshot_lib(clone, lib_files) do
+  @doc false
+  def snapshot_lib(clone, lib_files) do
     Enum.map(lib_files, fn rel ->
       abs = Path.join(clone, rel)
       content = if File.exists?(abs), do: File.read!(abs), else: nil
@@ -275,7 +281,8 @@ defmodule Cev.Evolve.Gate do
     end)
   end
 
-  defp restore_lib(snapshot) do
+  @doc false
+  def restore_lib(snapshot) do
     Enum.each(snapshot, fn f ->
       if f.content, do: File.write!(f.abs, f.content)
     end)
@@ -545,15 +552,19 @@ defmodule Cev.Evolve.Gate do
   defp run_tests_traced(clone, files, extra) do
     args = extra ++ files
 
-    {out, code} =
-      System.cmd("mix", ["test" | args],
-        cd: clone,
-        stderr_to_stdout: true,
-        env: [{"MIX_ENV", "test"}]
-      )
+    case Cev.MixTest.run(clone, args) do
+      {:ok, code, out} ->
+        Logger.debug("[Gate] mix test #{inspect(args)} exit=#{code}\n#{out}")
+        {code, out}
 
-    Logger.debug("[Gate] mix test #{inspect(args)} exit=#{code}\n#{out}")
-    {code, out}
+      # A hung suite is environmental, not red. Returning a non-zero exit with no
+      # ExUnit summary routes it through `suite_verdict/2` -> `:did_not_run` ->
+      # `environmental/3`, which preserves the candidate's patch instead of
+      # judging it on a suite that never finished.
+      {:timeout, secs, out} ->
+        Logger.warning("[Gate] mix test #{inspect(args)} exceeded #{secs}s — environmental")
+        {124, out <> "\n[Gate] mix test exceeded the #{secs}s wall-clock cap and was killed.\n"}
+    end
   end
 
   defp tracked_in_head?(clone, rel) do
