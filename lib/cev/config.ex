@@ -123,6 +123,26 @@ defmodule Cev.Config do
     |> Path.expand()
   end
 
+  @doc """
+  Absolute path to the **accepting** credence repo — the one where rule bases
+  are reviewed and merged, and therefore the one whose `STATUS.md` states the
+  current mode (docs/19 §4, enforced by `Cev.Status` / `Cev.Preflight`).
+
+  Resolution order (first wins): the `CEV_ACCEPTING_REPO` env var, the
+  `:accepting_repo` config key, else `credence_clone/0`.
+
+  The fallback is a convenience for the common single-checkout setup, not a
+  claim that the two are the same thing. The Gate's clone sits on the
+  `evolution` branch, so when the accepting work happens on a different branch
+  or a different checkout, its `STATUS.md` can trail by a whole standard
+  revision — point `:accepting_repo` at the real one in that case.
+  """
+  def accepting_repo do
+    (env("CEV_ACCEPTING_REPO") || Application.get_env(:cev, :accepting_repo) ||
+       credence_clone())
+    |> Path.expand()
+  end
+
   # Read an env var, treating unset/blank as absent.
   defp env(name) do
     case System.get_env(name) do

@@ -14,7 +14,7 @@ defmodule Cev.Preflight do
 
   require Logger
 
-  alias Cev.{Config, LLM, TaskSource, Workspace}
+  alias Cev.{Config, LLM, Status, TaskSource, Workspace}
 
   @branch "evolution"
 
@@ -70,6 +70,49 @@ defmodule Cev.Preflight do
     if Config.implement_driver() == :pi, do: pi_static!()
 
     check_secrets!()
+    check_status_mode!()
+  end
+
+  # T4.1 — the mode interlock. `STATUS.md` and docs/21 have described this check
+  # since the Rule Standard landed; until now nothing in the harness read the
+  # file at all, so the interlock was prose enforced by people.
+  defp check_status_mode! do
+    repo = Config.accepting_repo()
+    path = Path.join(repo, "STATUS.md")
+
+    case Status.mode(path) do
+      {:ok, mode} ->
+        if Status.blocks_generation?(mode) do
+          fail("""
+          Rule generation is closed: #{path} says MODE: #{mode}.
+
+          The existing rule population is still being brought up to the current
+          Rule Standard (docs/19). Generating now adds to the backlog that mode
+          exists to clear — a standard bump must not be outrun by new rules born
+          under the old bar.
+
+          Fix one of:
+            • finish the catch-up and set `MODE: PRODUCING` in #{path}
+              (the flip is the maintainer's call, made on purpose)
+            • point CEV_ACCEPTING_REPO at the repo whose STATUS.md is
+              authoritative, if this checkout is not it
+          """)
+        end
+
+      {:error, reason} ->
+        fail("""
+        Could not read the mode from #{path} (#{reason}).
+
+        This check decides whether rule generation may start at all, so it fails
+        closed: a preflight that shrugs when it cannot find the file it exists to
+        check is exactly the gap T4.1 was filed to close.
+
+        Fix one of:
+          • ensure the accepting credence repo is at #{repo} and carries a
+            STATUS.md with a `MODE:` line (docs/19 §4)
+          • set CEV_ACCEPTING_REPO / :accepting_repo to the right checkout
+        """)
+    end
   end
 
   defp pi_static! do
