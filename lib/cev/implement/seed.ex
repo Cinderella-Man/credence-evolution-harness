@@ -52,6 +52,7 @@ defmodule Cev.Implement.Seed do
       diagnostic_block(ctx),
       bugfix_block(ctx),
       invariants_block(),
+      gates_block(),
       dsl_safety_block(ctx),
       syntax_fix_block(ctx),
       conventions_block(),
@@ -223,6 +224,104 @@ defmodule Cev.Implement.Seed do
 
     ### Adversarial-input checklist (self-run before emitting fix)
     #{Prompt.adversarial_block()}
+    """
+  end
+
+  # T4.4 — six gates the model previously learned about only by failing them.
+  # Each one is a real rejection this loop has paid for, and each is cheap to
+  # state up front. The seed otherwise teaches almost entirely by prohibition;
+  # (5) is deliberately the opposite — one worked example of the shape that
+  # passes.
+  defp gates_block do
+    """
+    ## Gates you will be judged by (state them to yourself BEFORE writing fix/2)
+
+    ### 1. Equivalence inputs must match your rule's risk (C2.2 — mechanical)
+    The meta-gate reads your rule source for the calls it MATCHES or EMITS, then
+    checks the *evaluated* `inputs:` of your equivalence test. Naming a dimension
+    is not enough; the values are what is inspected.
+
+      * If you match/emit an order- or identity-sensitive collection call —
+        `Enum.sort`/`sort_by`, `min`/`max`(`_by`), `uniq`, `dedup`, `frequencies`,
+        `group_by`, `member?` — your inputs MUST contain an integer and a float
+        that are `==` **inside the same input** (e.g. `[1, 1.0, 2]`). Erlang term
+        order ties `1` and `1.0`; every map / MapSet / `===` path separates them.
+        That one pair is the whole trap.
+      * If you match/emit a `String` grapheme/codepoint call and do NOT declare
+        `:single_codepoint_graphemes`, you are claiming correctness for arbitrary
+        Unicode, so your inputs MUST contain a multi-codepoint grapheme (a
+        decomposed accent, a ZWJ emoji, a regional-indicator flag).
+
+    Picking `term_lists` for a Map-rewriting rule fails this gate with no earlier
+    warning.
+
+    ### 2. An over-fire is a DROP, not an accept (C13)
+    Credence pins an accepted-findings snapshot and a per-rule budget. A new rule
+    that fires on idiomatic real code in the corpus is REJECTED — the finding is
+    not quietly added to the accepted list. "It only fires a little extra" is a
+    rejection, so prefer a narrow rule that fires 3 times correctly over a broad
+    one that fires 30 times with 4 wrong.
+
+    ### 3. One diagnostic has ONE owner, and declining is a first-class move (C8)
+    Semantic dispatch is `Enum.find` over rules ordered by priority then module
+    name: **first match wins, no fall-through**. A rule whose `match?/1` is broader
+    than its `fix/2` can repair does not merely fail — it *starves* every other
+    rule of that diagnostic, and they become dead code.
+
+    So do not claim-then-no-op. Narrow `match?/1` to what you can actually fix,
+    and where the decision needs the source rather than the message, decline
+    explicitly with a `should_report?/2`-style guard instead of matching and
+    returning the input unchanged.
+
+    ### 4. Never match a leaf token without its enclosing construct
+    Verbatim, because three of four measured over-fires were this one shape:
+
+    > A rule that matches a leaf token must name the construct that encloses it,
+    > and a guard of the form `f(a) == f(b)` is invalid if `f` can return a
+    > sentinel.
+
+    A bare atom matched without checking the call around it rewrote
+    `:read_concurrency` inside a plain data list. A `var_name(a) == var_name(b)`
+    guard whose helper returns `nil` for every non-variable is vacuously TRUE on
+    any two non-variables.
+
+    ### 5. What a passing rule looks like (the shape, not a template to copy)
+
+        defmodule Credence.Semantic.FixThing do
+          @moduledoc \"\"\"
+          One sentence on the failure mode, then Bad/Good examples.
+          \"\"\"
+          use Credence.Semantic.Rule
+          alias Credence.Issue
+
+          # Keyed on THIS diagnostic's distinctive text, never a generic envelope.
+          @impl true
+          def match?(%{severity: :error, message: msg}) when is_binary(msg),
+            do: String.contains?(msg, "the distinctive substring")
+
+          def match?(_), do: false
+
+          @impl true
+          def to_issue(d), do: %Issue{rule: :fix_thing, message: d.message, meta: %{line: line(d)}}
+
+          # Declines by returning the source unchanged ONLY for shapes it has
+          # decided are out of scope — and says so in the moduledoc, so a reader
+          # can tell a deliberate decline from a silent failure.
+          @impl true
+          def fix(source, diagnostic) do
+            with {:ok, ast} <- Sourceror.parse_string(source),
+                 {:ok, patch} <- build_patch(ast, diagnostic) do
+              Sourceror.patch_string(source, [patch])
+            else
+              _ -> source
+            end
+          end
+        end
+
+    ### 6. Your `match?/1` competes with ~90 live rules
+    Before widening a match to catch one more case, ask which existing rule that
+    diagnostic currently belongs to. If the answer is "another rule", widening
+    yours kills theirs.
     """
   end
 
