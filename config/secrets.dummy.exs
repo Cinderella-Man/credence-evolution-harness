@@ -8,7 +8,7 @@ import Config
 #     `config :cev`, or Elixir warns "configured application :tunex … not
 #     available" and none of your keys are seen.
 config :cev,
-  # Mimo chat-completions auth (Translate + Solve-remote-override).
+  # Mimo chat-completions auth (Solve-remote-override + rule-gen).
   secret_providers: %{
     xiaomi_mimo_2_5_pro: %{
       headers: %{
@@ -28,4 +28,5 @@ config :cev,
   # circuit breaker). This is the Xiaomi-Account browser cookie, NOT a tp- key,
   # and it EXPIRES (re-grab from DevTools → Network → tokenPlan/usage → Copy as
   # cURL). Can also be set via the CEV_MIMO_COOKIE env var.
-  mimo_console_cookie: ~s(cookie-preferences=...; api-platform_serviceToken="..."; userId=...; api-platform_slh="..."; api-platform_ph="...")
+  mimo_console_cookie:
+    ~s(cookie-preferences=...; api-platform_serviceToken="..."; userId=...; api-platform_slh="..."; api-platform_ph="...")

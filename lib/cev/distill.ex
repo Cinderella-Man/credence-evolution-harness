@@ -8,8 +8,8 @@ defmodule Cev.Distill do
   single-call input.
 
   `distill/1` drops everything **above** the `===SOLVE_BOUNDARY===` sentinel
-  (Python source / translate / round-trip / reference solution — all of which
-  live above it) and keeps everything below: the Qwen solve attempts + every
+  (task setup / the sanity-gate reference check — all of which live above it)
+  and keeps everything below: the Qwen solve attempts + every
   `[Validator.run]` / `[credence_fix]` / `APPLIED_RULES` fix trace.
 
   The sentinel is emitted unconditionally on every row immediately before solve

@@ -1,6 +1,6 @@
 defmodule Cev.LLM do
   @moduledoc """
-  Chat-completions client for the two chat stages (Translate + Solve).
+  Chat-completions client for the chat stages (Solve, Classify, Implement).
 
   `call/3` returns a three-way content classification plus token `usage`:
 
@@ -13,7 +13,7 @@ defmodule Cev.LLM do
   The `{:truncated, _}` case fixes the v1 bug where non-empty-but-truncated
   output was silently accepted (the `content != ""` branch won before the
   length check). Per-stage handling of truncation differs — see the pipeline
-  modules; Translate raises the ceiling, Solve re-rolls at the same ceiling.
+  modules; e.g. Solve re-rolls at the same ceiling.
   """
 
   require Logger
@@ -23,8 +23,8 @@ defmodule Cev.LLM do
   @doc """
   Resolve the provider + token floor for a chat stage and call the model.
 
-  `opts` overrides win over the stage defaults (e.g. Translate's raised-ceiling
-  retry passes `max_tokens:` to lift the floor).
+  `opts` overrides win over the stage defaults (e.g. a retry passing
+  `max_tokens:` to lift the floor).
   """
   def for_stage(stage, user_prompt, system_prompt, opts \\ []) do
     provider = Config.provider_for(stage)
@@ -93,7 +93,12 @@ defmodule Cev.LLM do
   # (a quota/rate-limit gauge may live here, not in the body), the verbatim
   # `usage` object (incl. reasoning_tokens / cached_tokens details a reasoning
   # model emits and our normalized breakdown drops), and finish_reason/model.
-  defp record_chat_diag({:ok, %{status: status, headers: hdrs, body: body}}, provider, model, elapsed) do
+  defp record_chat_diag(
+         {:ok, %{status: status, headers: hdrs, body: body}},
+         provider,
+         model,
+         elapsed
+       ) do
     usage = if is_map(body), do: body["usage"], else: nil
     choice = if is_map(body), do: List.first(body["choices"] || []), else: nil
 
@@ -111,7 +116,13 @@ defmodule Cev.LLM do
   end
 
   defp record_chat_diag({:error, reason}, provider, model, elapsed) do
-    Cev.Diag.record(%{kind: "chat", provider: provider, model: model, elapsed_ms: elapsed, error: inspect(reason)})
+    Cev.Diag.record(%{
+      kind: "chat",
+      provider: provider,
+      model: model,
+      elapsed_ms: elapsed,
+      error: inspect(reason)
+    })
   end
 
   # Feed Mimo chat `usage` to Budget, tagged with the stage provider + model

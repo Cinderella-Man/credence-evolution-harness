@@ -34,7 +34,7 @@ config :cev,
   # 60s is safe: the slowest legitimate harness sleeps ~6s total.
   validator_test_timeout_s: 60,
 
-  # ── Chat providers (Translate + Solve) ──────────────────────────────
+  # ── Chat providers (Solve + Classify + Implement) ───────────────────
   # `token_param` names the request field carrying the output-token cap
   # (Mimo: max_completion_tokens; vLLM/OpenAI-compatible Qwen: max_tokens).
   # The per-stage floor (see `stage_max_tokens`) is injected at call time by
@@ -48,9 +48,10 @@ config :cev,
       stream: false
     },
     # Non-pro V2.5 (310B MoE, 15B active) — the SOLVE model. Weaker than the pro,
-    # so its less-idiomatic output is the rule-discovery feedstock; translate +
-    # rule-gen stay on the stronger pro. (Replaces the deprecated mimo-v2-pro,
-    # which auto-routes to V2.5 on 2026-06-01 and is removed by 2026-06-30.)
+    # so its less-idiomatic output is the rule-discovery feedstock; rule-gen
+    # (classify + implement) stays on the stronger pro. (Replaces the
+    # deprecated mimo-v2-pro, which auto-routes to V2.5 on 2026-06-01 and is
+    # removed by 2026-06-30.)
     xiaomi_mimo_2_5: %{
       url: "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions",
       model: "mimo-v2.5",
@@ -197,7 +198,11 @@ config :cev,
     # discounted "Credits", so derived $ is a RELATIVE estimate — the raw
     # token COUNTS logged to var/run/usage.jsonl are the ground truth.
     prices: %{
-      xiaomi_mimo_2_5_pro: %{in: 0.435 / 1_000_000, cache_read: 0.0036 / 1_000_000, out: 0.87 / 1_000_000},
+      xiaomi_mimo_2_5_pro: %{
+        in: 0.435 / 1_000_000,
+        cache_read: 0.0036 / 1_000_000,
+        out: 0.87 / 1_000_000
+      },
       xiaomi_mimo_2_5: %{in: 1.0 / 1_000_000, cache_read: 0.20 / 1_000_000, out: 3.0 / 1_000_000},
       cc: %{in: 0.435 / 1_000_000, cache_read: 0.0036 / 1_000_000, out: 0.87 / 1_000_000},
       # Anthropic public pay-as-you-go for Opus (per-token). Only used when the

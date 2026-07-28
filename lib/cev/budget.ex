@@ -2,7 +2,7 @@ defmodule Cev.Budget do
   @moduledoc """
   Tracks Mimo spend (the only paid dependency) and classifies API errors.
 
-  Spend is accumulated from `usage` on every Translate response **and** from the
+  Spend is accumulated from `usage` on every chat response **and** from the
   Claude Code JSON output (`input_tokens`/`output_tokens` + cache fields). CC's
   `total_cost_usd` is **ignored** (it uses Anthropic pricing, wrong for a custom
   Mimo model). When `usage` is absent we fall back to a session count.
@@ -66,7 +66,8 @@ defmodule Cev.Budget do
   def init(opts) do
     budget = Config.budget()
 
-    if Keyword.get(opts, :heartbeat, true), do: :timer.send_interval(@heartbeat_ms, self(), :heartbeat)
+    if Keyword.get(opts, :heartbeat, true),
+      do: :timer.send_interval(@heartbeat_ms, self(), :heartbeat)
 
     state = %{
       spent_usd: 0.0,
@@ -115,7 +116,10 @@ defmodule Cev.Budget do
     Logger.debug("[Budget] spent so far (est.): $#{Float.round(state.spent_usd, 4)}")
 
     if state.spent_usd > state.ceiling do
-      Logger.error("[Budget] RUNAWAY: $#{Float.round(state.spent_usd, 2)} > ceiling $#{state.ceiling}")
+      Logger.error(
+        "[Budget] RUNAWAY: $#{Float.round(state.spent_usd, 2)} > ceiling $#{state.ceiling}"
+      )
+
       state.on_runaway.({:runaway_budget, state.spent_usd})
     end
 
@@ -270,8 +274,8 @@ defmodule Cev.Budget do
         ts: System.os_time(:second),
         row: state.current_row,
         kind: kind,
-        # Stage atom (:translate | :solve | :classify | :implement) threaded
-        # from LLM.for_stage — drives `mix cev.usage`'s by-stage split (T0.2).
+        # Stage atom (:solve | :classify | :implement) threaded from
+        # LLM.for_stage — drives `mix cev.usage`'s by-stage split (T0.2).
         stage: Map.get(meta, :stage),
         provider: provider,
         model: Map.get(meta, :model),
