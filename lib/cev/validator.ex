@@ -389,8 +389,22 @@ defmodule Cev.Validator do
         end
 
       code != 0 ->
-        # Script crashed or credence not available
-        Logger.warning("[run_credence_fix] script error (exit #{code}): #{String.trim(output)}")
+        # The fix script itself failed — credence crashed, or is not loadable in
+        # this workspace. Row 54 (docs/22 T4.3): this used to be a warning the row
+        # walked straight past, so the run continued "with the original" and a
+        # crashing credence looked exactly like a credence that found nothing.
+        # The two are opposite facts and only one of them is a bug worth fixing.
+        #
+        # Preserved as a sidecar rather than only logged, for the same reason H12
+        # gave the closed set one: evidence that exists only inside a
+        # `Logger.debug` is evidence a log-level change deletes.
+        Logger.error(
+          "[run_credence_fix] CREDENCE_FIX_SCRIPT_ERROR exit=#{code} — " <>
+            "the row continues on the ORIGINAL source; credence analysed nothing.\n" <>
+            String.trim(output)
+        )
+
+        Cev.RowLog.write_sidecar("credence_fix_error", "exit=#{code}\n" <> output)
 
         :error
 
