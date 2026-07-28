@@ -66,10 +66,12 @@ defmodule Cev.Implement.Seed do
   # ── Sections ─────────────────────────────────────────────────────────────
 
   defp header(%{mode: :new, phase: phase}, :pi),
-    do: "## Task: implement a NEW #{phase} Credence rule — agentic. Fill the generated stub files IN PLACE, run the focused tests, and loop until green."
+    do:
+      "## Task: implement a NEW #{phase} Credence rule — agentic. Fill the generated stub files IN PLACE, run the focused tests, and loop until green."
 
   defp header(%{mode: :bugfix, bugfix: %{sub_shape: shape}}, :pi),
-    do: "## Task: FIX an existing Credence rule (#{shape}) — agentic. Edit it + its tests in place, run the focused tests, and loop until green."
+    do:
+      "## Task: FIX an existing Credence rule (#{shape}) — agentic. Edit it + its tests in place, run the focused tests, and loop until green."
 
   defp header(%{mode: :new, phase: phase}, _llm),
     do: "## Task: implement a NEW #{phase} rule by filling the generated stubs."
@@ -147,7 +149,8 @@ defmodule Cev.Implement.Seed do
     """
   end
 
-  defp scaffold_block(%{mode: :new, scaffold_files: files}) when is_map(files) and map_size(files) > 0 do
+  defp scaffold_block(%{mode: :new, scaffold_files: files})
+       when is_map(files) and map_size(files) > 0 do
     blocks =
       Enum.map_join(files, "\n\n", fn {path, content} ->
         "### #{path}\n#{fence(content)}"
@@ -279,7 +282,7 @@ defmodule Cev.Implement.Seed do
       match?/Regex.match?, starts_with?/ends_with?, split+Enum.at — even for negatives.
     - `expected` is the rule's REAL output (run it, copy the string), never hand-written.
     - Fixture form — exactly one canonical shape per value: single-line value, no `"` → plain `"foo"`;
-      single-line value containing `"` → `~S'foo "x"'`; multi-line value → `"""…"""` heredoc. NEVER a
+      single-line value containing `"` → `~S'foo "x"'`; multi-line value → `\"""…\"""` heredoc. NEVER a
       single-content-line heredoc, NEVER \\n escapes.
     - `_check` includes the deliberately-dropped unsafe cases asserted as "no issue".
     - check and fix must agree.
@@ -314,7 +317,13 @@ defmodule Cev.Implement.Seed do
   defp repair_block(_), do: nil
 
   defp output_contract(%{mode: :new, phase: :pattern}) do
-    contract(["RULE", "CHECK_TEST", "FIX_TEST", "EQUIVALENCE_TEST", "(PROPERTY_TEST iff switch-gated)"])
+    contract([
+      "RULE",
+      "CHECK_TEST",
+      "FIX_TEST",
+      "EQUIVALENCE_TEST",
+      "(PROPERTY_TEST iff switch-gated)"
+    ])
   end
 
   defp output_contract(%{mode: :new}) do
@@ -323,6 +332,7 @@ defmodule Cev.Implement.Seed do
 
   defp output_contract(%{mode: :bugfix, bugfix: bf}) do
     paths = Map.keys(bf.test_files) |> Enum.map_join("\n", &"===TEST:#{&1}===")
+
     "## Output contract (whole files)\n#{@no_fence}\n===RULE===\n<rule.ex>\n#{paths}\n<each test file>\n===END==="
   end
 

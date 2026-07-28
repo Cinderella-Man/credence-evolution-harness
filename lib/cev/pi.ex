@@ -38,14 +38,29 @@ defmodule Cev.Pi do
     pi = System.find_executable("pi") || "pi"
 
     args =
-      ["-p", "--mode", "json", "-e", Config.pi_extension(),
-       "--provider", Config.pi_provider(), "--model", Config.pi_model(),
-       "--thinking", Config.pi_thinking(), "--no-session", "--no-context-files",
-       "-t", Config.pi_tools(), "-a"]
+      [
+        "-p",
+        "--mode",
+        "json",
+        "-e",
+        Config.pi_extension(),
+        "--provider",
+        Config.pi_provider(),
+        "--model",
+        Config.pi_model(),
+        "--thinking",
+        Config.pi_thinking(),
+        "--no-session",
+        "--no-context-files",
+        "-t",
+        Config.pi_tools(),
+        "-a"
+      ]
 
     # exec pi with stdin from the prompt file → feeds the prompt AND the EOF pi
     # needs to exit in -p mode.
-    script = "exec " <> shq(pi) <> " " <> Enum.map_join(args, " ", &shq/1) <> " < " <> shq(prompt_file)
+    script =
+      "exec " <> shq(pi) <> " " <> Enum.map_join(args, " ", &shq/1) <> " < " <> shq(prompt_file)
 
     Logger.info(
       "[Pi] running agent (cwd=#{clone}, model=#{Config.pi_model()}, " <>
@@ -162,7 +177,11 @@ defmodule Cev.Pi do
   # (a token-bucket plan debits every turn, not just the last).
   defp handle_event(acc, %{"type" => "message_end", "message" => %{"role" => "assistant"} = m}) do
     text =
-      (m["content"] || []) |> List.wrap() |> Enum.map(& &1["text"]) |> Enum.reject(&is_nil/1) |> Enum.join()
+      (m["content"] || [])
+      |> List.wrap()
+      |> Enum.map(& &1["text"])
+      |> Enum.reject(&is_nil/1)
+      |> Enum.join()
 
     %{
       acc
@@ -259,7 +278,9 @@ defmodule Cev.Pi do
   defp kill(port) do
     info = Port.info(port)
     Port.close(port)
-    if info && info[:os_pid], do: System.cmd("kill", ["-9", to_string(info[:os_pid])], stderr_to_stdout: true)
+
+    if info && info[:os_pid],
+      do: System.cmd("kill", ["-9", to_string(info[:os_pid])], stderr_to_stdout: true)
   rescue
     _ -> :ok
   catch

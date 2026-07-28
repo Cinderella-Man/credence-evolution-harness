@@ -35,7 +35,8 @@ defmodule Cev.Credence do
 
   @doc "Just the switch names (⊆-check for the classifier `assumptions` gate)."
   @spec assumption_names(String.t()) :: [atom()]
-  def assumption_names(clone \\ Config.credence_clone()), do: assumptions(clone) |> Enum.map(& &1.name)
+  def assumption_names(clone \\ Config.credence_clone()),
+    do: assumptions(clone) |> Enum.map(& &1.name)
 
   @doc "Test seam: prime the cache directly (skips shelling)."
   def put_assumptions(list) when is_list(list), do: :persistent_term.put(@pt_key, list)

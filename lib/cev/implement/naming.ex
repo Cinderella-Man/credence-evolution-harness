@@ -20,7 +20,8 @@ defmodule Cev.Implement.Naming do
           files: %{optional(String.t()) => String.t()}
         }
 
-  @spec resolve_and_scaffold(String.t(), atom(), String.t()) :: {:ok, scaffold()} | {:error, term()}
+  @spec resolve_and_scaffold(String.t(), atom(), String.t()) ::
+          {:ok, scaffold()} | {:error, term()}
   def resolve_and_scaffold(proposed_name, phase, clone \\ Config.credence_clone()) do
     snake = free_snake(proposed_name, phase, clone)
     pascal = Macro.camelize(snake)

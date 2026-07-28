@@ -59,13 +59,17 @@ defmodule Cev.ClaudeCode do
     args =
       ["-p", "--output-format", "stream-json", "--verbose", "--add-dir", clone] ++
         ["--permission-mode", @permission_mode] ++
-        ["--allowedTools"] ++ @allowed_tools ++
-        ["--disallowedTools"] ++ @disallowed_tools ++
+        ["--allowedTools"] ++
+        @allowed_tools ++
+        ["--disallowedTools"] ++
+        @disallowed_tools ++
         ["--max-turns", to_string(max_turns)]
 
     script = "exec claude " <> Enum.map_join(args, " ", &shq/1) <> " < " <> shq(prompt_file)
 
-    Logger.info("[ClaudeCode] running agent (cwd=#{clone}, max_turns=#{max_turns}, timeout=#{div(timeout_ms, 1000)}s)")
+    Logger.info(
+      "[ClaudeCode] running agent (cwd=#{clone}, max_turns=#{max_turns}, timeout=#{div(timeout_ms, 1000)}s)"
+    )
 
     result =
       try do
@@ -94,7 +98,17 @@ defmodule Cev.ClaudeCode do
 
     deadline = System.monotonic_time(:millisecond) + timeout_ms
     t0 = System.monotonic_time(:millisecond)
-    acc = %{buffer: "", result: nil, steps: 0, summed_usage: zero_usage(), roundtrips: 0, row: row, t0: t0}
+
+    acc = %{
+      buffer: "",
+      result: nil,
+      steps: 0,
+      summed_usage: zero_usage(),
+      roundtrips: 0,
+      row: row,
+      t0: t0
+    }
+
     collect(port, acc, deadline, max_turns)
   end
 
@@ -111,7 +125,7 @@ defmodule Cev.ClaudeCode do
     }
 
   defp add_usage(acc, %{} = u) do
-    Map.new(acc, fn {k, v} -> {k, v + (is_number(u[k]) && u[k] || 0)} end)
+    Map.new(acc, fn {k, v} -> {k, v + ((is_number(u[k]) && u[k]) || 0)} end)
   end
 
   defp collect(port, acc, deadline, max_turns) do
@@ -217,7 +231,11 @@ defmodule Cev.ClaudeCode do
     # Carry `modelUsage` too — it's the explicit per-model cumulative and runs a
     # few % higher than `usage`; logged alongside so the ledger isn't blind to it.
     if is_map(event["usage"]),
-      do: Cev.Budget.record(event["usage"], :cc, %{model: Config.cc_model(), model_usage: event["modelUsage"]})
+      do:
+        Cev.Budget.record(event["usage"], :cc, %{
+          model: Config.cc_model(),
+          model_usage: event["modelUsage"]
+        })
 
     log_usage_reconciliation(event["usage"], acc.summed_usage, acc.roundtrips, num_turns)
     record_session_diag(acc, event, subtype, num_turns)
@@ -267,8 +285,10 @@ defmodule Cev.ClaudeCode do
   # of per-round-trip usages (closer to what a token-bucket plan debits). A large
   # ratio means the ledger is undercounting the console — see docs/04.
   defp log_usage_reconciliation(result_usage, summed, roundtrips, num_turns) do
-    tot = fn u -> (u["input_tokens"] || 0) + (u["output_tokens"] || 0) +
-                  (u["cache_read_input_tokens"] || 0) + (u["cache_creation_input_tokens"] || 0) end
+    tot = fn u ->
+      (u["input_tokens"] || 0) + (u["output_tokens"] || 0) +
+        (u["cache_read_input_tokens"] || 0) + (u["cache_creation_input_tokens"] || 0)
+    end
 
     r = if is_map(result_usage), do: tot.(result_usage), else: 0
     s = tot.(summed)
@@ -335,7 +355,10 @@ defmodule Cev.ClaudeCode do
 
           String.starts_with?(rest, "gave_up") ->
             detail =
-              rest |> String.replace_prefix("gave_up", "") |> String.trim_leading(":") |> String.trim()
+              rest
+              |> String.replace_prefix("gave_up", "")
+              |> String.trim_leading(":")
+              |> String.trim()
 
             {:gave_up, detail}
 
@@ -369,7 +392,9 @@ defmodule Cev.ClaudeCode do
     # means the port's process IS claude, so this stops the agent directly.
     info = Port.info(port)
     Port.close(port)
-    if info && info[:os_pid], do: System.cmd("kill", ["-9", to_string(info[:os_pid])], stderr_to_stdout: true)
+
+    if info && info[:os_pid],
+      do: System.cmd("kill", ["-9", to_string(info[:os_pid])], stderr_to_stdout: true)
   rescue
     _ -> :ok
   catch

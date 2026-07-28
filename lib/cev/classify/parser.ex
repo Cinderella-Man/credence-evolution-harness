@@ -66,11 +66,15 @@ defmodule Cev.Classify.Parser do
 
   defp decision(m) do
     case m["DECISION"] && String.trim(m["DECISION"]) do
-      nil -> {:error, :missing_decision}
-      raw -> Map.fetch(@decisions, raw) |> case do
-               {:ok, d} -> {:ok, d}
-               :error -> {:error, {:bad_decision, raw}}
-             end
+      nil ->
+        {:error, :missing_decision}
+
+      raw ->
+        Map.fetch(@decisions, raw)
+        |> case do
+          {:ok, d} -> {:ok, d}
+          :error -> {:error, {:bad_decision, raw}}
+        end
     end
   end
 
@@ -119,5 +123,7 @@ defmodule Cev.Classify.Parser do
   defp proposed_switch(_other, _m), do: nil
 
   defp blank_to_nil(nil), do: nil
-  defp blank_to_nil(s) when is_binary(s), do: if(String.trim(s) == "", do: nil, else: String.trim(s))
+
+  defp blank_to_nil(s) when is_binary(s),
+    do: if(String.trim(s) == "", do: nil, else: String.trim(s))
 end

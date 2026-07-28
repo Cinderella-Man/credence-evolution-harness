@@ -108,7 +108,9 @@ defmodule Cev.Pipeline.Solve do
   end
 
   defp do_attempt(prompt, test, user, ws, opts, n, last) do
-    Logger.info("[Solve attempt #{n}] generating (#{if n == 1, do: "blind", else: "harness-guided"})")
+    Logger.info(
+      "[Solve attempt #{n}] generating (#{if n == 1, do: "blind", else: "harness-guided"})"
+    )
 
     case LLM.for_stage(:solve, user, system_prompt(), opts) do
       {:ok, content, _usage} ->

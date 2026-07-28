@@ -33,8 +33,15 @@ defmodule Cev.Implement.Output do
     sections = Markers.split(text) |> Enum.map(fn {k, v} -> {k, Parser.strip_outer_fences(v)} end)
 
     case Keyword.fetch!(opts, :mode) do
-      :new -> parse_new(to_map(sections), Keyword.fetch!(opts, :phase), Keyword.get(opts, :assumptions?, false))
-      :bugfix -> parse_bugfix(sections, Keyword.get(opts, :test_glob, []))
+      :new ->
+        parse_new(
+          to_map(sections),
+          Keyword.fetch!(opts, :phase),
+          Keyword.get(opts, :assumptions?, false)
+        )
+
+      :bugfix ->
+        parse_bugfix(sections, Keyword.get(opts, :test_glob, []))
     end
   end
 
@@ -52,15 +59,21 @@ defmodule Cev.Implement.Output do
 
   # Pattern MUST carry EQUIVALENCE_TEST; Syntax/Semantic must NOT.
   defp equivalence_rule(map, :pattern) do
-    if present?(map["EQUIVALENCE_TEST"]), do: :ok, else: {:error, :pattern_missing_equivalence_test}
+    if present?(map["EQUIVALENCE_TEST"]),
+      do: :ok,
+      else: {:error, :pattern_missing_equivalence_test}
   end
 
   defp equivalence_rule(map, _phase) do
-    if present?(map["EQUIVALENCE_TEST"]), do: {:error, :non_pattern_has_equivalence_test}, else: :ok
+    if present?(map["EQUIVALENCE_TEST"]),
+      do: {:error, :non_pattern_has_equivalence_test},
+      else: :ok
   end
 
   defp property_rule(map, true) do
-    if present?(map["PROPERTY_TEST"]), do: :ok, else: {:error, :switch_gated_missing_property_test}
+    if present?(map["PROPERTY_TEST"]),
+      do: :ok,
+      else: {:error, :switch_gated_missing_property_test}
   end
 
   defp property_rule(map, false) do
@@ -92,7 +105,8 @@ defmodule Cev.Implement.Output do
 
   # ── Helpers ──────────────────────────────────────────────────────────────
 
-  defp to_map(sections), do: Enum.reduce(sections, %{}, fn {k, v}, acc -> Map.put_new(acc, k, v) end)
+  defp to_map(sections),
+    do: Enum.reduce(sections, %{}, fn {k, v}, acc -> Map.put_new(acc, k, v) end)
 
   defp require_keys(map, keys) do
     case Enum.find(keys, &(not present?(map[&1]))) do

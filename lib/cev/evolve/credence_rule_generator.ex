@@ -148,7 +148,10 @@ defmodule Cev.Evolve.CredenceRuleGenerator do
         route(index, clone, result)
 
       {:error, reason} ->
-        Logger.error("[CredenceRuleGenerator] CC error: #{inspect(reason)} — discarding + escalating")
+        Logger.error(
+          "[CredenceRuleGenerator] CC error: #{inspect(reason)} — discarding + escalating"
+        )
+
         Gate.discard(clone)
         Ledger.append("## row #{index} — cc_error\n#{inspect(reason)}")
         RowLog.escalate(index)

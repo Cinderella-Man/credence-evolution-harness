@@ -90,7 +90,10 @@ defmodule Cev.SanityGate do
             :ok
 
           {:fail, why2} ->
-            Logger.warning("[SanityGate] #{task.name}: BLACKLISTED (#{why2}) — skipped every pass")
+            Logger.warning(
+              "[SanityGate] #{task.name}: BLACKLISTED (#{why2}) — skipped every pass"
+            )
+
             :blacklist
         end
     end
@@ -164,7 +167,9 @@ defmodule Cev.SanityGate do
 
   @impl true
   def handle_call({:put, hash, name, verdict}, _from, state) do
-    line = Jason.encode!(%{"hash" => hash, "name" => name, "verdict" => to_string(verdict)}) <> "\n"
+    line =
+      Jason.encode!(%{"hash" => hash, "name" => name, "verdict" => to_string(verdict)}) <> "\n"
+
     File.write!(state.path, line, [:append, :utf8])
     {:reply, :ok, %{state | map: Map.put(state.map, hash, verdict)}}
   end

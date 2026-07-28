@@ -131,6 +131,7 @@ defmodule Cev.Config do
       value -> value
     end
   end
+
   def git_identity, do: Application.get_env(:cev, :git_identity, %{})
   def cache_dir, do: Application.get_env(:cev, :cache_dir, "var/cache")
   def run_dir, do: Application.get_env(:cev, :run_dir, "var/run")

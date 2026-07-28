@@ -41,7 +41,9 @@ defmodule Cev.Markers do
   end
 
   defp flush(nil, _buf, acc), do: acc
-  defp flush(key, buf, acc), do: [{key, buf |> Enum.reverse() |> Enum.join("\n") |> String.trim()} | acc]
+
+  defp flush(key, buf, acc),
+    do: [{key, buf |> Enum.reverse() |> Enum.join("\n") |> String.trim()} | acc]
 
   defp flush_last({key, buf, acc}), do: flush(key, buf, acc)
 end

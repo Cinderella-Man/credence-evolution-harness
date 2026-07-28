@@ -62,7 +62,13 @@ defmodule Mix.Tasks.Cev.Diag do
       end
 
     clone = Config.credence_clone()
-    prompt = CredenceRuleGenerator.build_prompt(row_log(snippet), "none", CredenceRuleGenerator.rule_index(clone))
+
+    prompt =
+      CredenceRuleGenerator.build_prompt(
+        row_log(snippet),
+        "none",
+        CredenceRuleGenerator.rule_index(clone)
+      )
 
     Mix.shell().info("""
     === cev.diag — single rule-gen session ===
@@ -103,7 +109,10 @@ defmodule Mix.Tasks.Cev.Diag do
     case Cev.LLM.for_stage(:classify, "reply with exactly: OK", "", max_tokens: 16) do
       {tag, _content, usage} when tag in [:ok, :truncated] ->
         Mix.shell().info("chat usage object: #{inspect(usage)}")
-        Mix.shell().info("(full headers written to diag.jsonl — look for any 'ratelimit'/'quota'/'token' key)")
+
+        Mix.shell().info(
+          "(full headers written to diag.jsonl — look for any 'ratelimit'/'quota'/'token' key)"
+        )
 
       other ->
         Mix.shell().info("chat probe returned: #{inspect(other)}")
@@ -112,8 +121,8 @@ defmodule Mix.Tasks.Cev.Diag do
 
   defp report(r, before_used, after_used) do
     tot = fn u ->
-      (num(u, "input_tokens") + num(u, "output_tokens") +
-         num(u, "cache_read_input_tokens") + num(u, "cache_creation_input_tokens"))
+      num(u, "input_tokens") + num(u, "output_tokens") +
+        num(u, "cache_read_input_tokens") + num(u, "cache_creation_input_tokens")
     end
 
     result_total = if is_map(r.usage), do: tot.(r.usage), else: 0
@@ -199,9 +208,12 @@ defmodule Mix.Tasks.Cev.Diag do
   end
 
   defp flag_header(k) do
-    if String.match?(String.downcase(k), ~r/(ratelimit|quota|token|balance|credit|usage|remain|limit)/),
-      do: "★ ",
-      else: "  "
+    if String.match?(
+         String.downcase(k),
+         ~r/(ratelimit|quota|token|balance|credit|usage|remain|limit)/
+       ),
+       do: "★ ",
+       else: "  "
   end
 
   defp chat_usage_report(chat) do
@@ -217,9 +229,14 @@ defmodule Mix.Tasks.Cev.Diag do
   # console delta can be matched against the right one.
   defp cc_session_report(cc) do
     header("CC SESSIONS — result.usage vs modelUsage vs summed-per-round-trip (tokens)")
-    Mix.shell().info(String.pad_trailing("row", 10) <> String.pad_trailing("turns", 8) <>
-      String.pad_trailing("result", 12) <> String.pad_trailing("modelUsage", 14) <>
-      String.pad_trailing("summed", 12) <> "subtype")
+
+    Mix.shell().info(
+      String.pad_trailing("row", 10) <>
+        String.pad_trailing("turns", 8) <>
+        String.pad_trailing("result", 12) <>
+        String.pad_trailing("modelUsage", 14) <>
+        String.pad_trailing("summed", 12) <> "subtype"
+    )
 
     Enum.each(cc, fn r ->
       Mix.shell().info(

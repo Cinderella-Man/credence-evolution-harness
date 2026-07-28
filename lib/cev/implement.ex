@@ -156,7 +156,15 @@ defmodule Cev.Implement do
             end
 
           {:error, reason} ->
-            retry(ctx, seed, content, "INVALID EMIT: #{inspect(reason)}", attempt, out_total, emit)
+            retry(
+              ctx,
+              seed,
+              content,
+              "INVALID EMIT: #{inspect(reason)}",
+              attempt,
+              out_total,
+              emit
+            )
         end
 
       {:error, reason} ->
@@ -170,7 +178,9 @@ defmodule Cev.Implement do
     else
       # Flat retry: seed + the LAST attempt + the LAST failures (not the whole
       # history) — keeps per-retry size flat, not quadratic (§5.5).
-      user = "#{seed}\n\n## YOUR LAST ATTEMPT (FAILED)\n#{last}\n\n## FAILURES (fix these)\n#{trim(failures)}"
+      user =
+        "#{seed}\n\n## YOUR LAST ATTEMPT (FAILED)\n#{last}\n\n## FAILURES (fix these)\n#{trim(failures)}"
+
       loop(ctx, seed, user, attempt + 1, out_total, emit)
     end
   end
@@ -247,7 +257,11 @@ defmodule Cev.Implement do
 
   defp run_mix_test(clone, args) do
     {out, code} =
-      System.cmd("mix", ["test" | args], cd: clone, stderr_to_stdout: true, env: [{"MIX_ENV", "test"}])
+      System.cmd("mix", ["test" | args],
+        cd: clone,
+        stderr_to_stdout: true,
+        env: [{"MIX_ENV", "test"}]
+      )
 
     if code == 0, do: :pass, else: {:fail, out}
   end
@@ -262,7 +276,9 @@ defmodule Cev.Implement do
   # ── Result ────────────────────────────────────────────────────────────────
 
   defp result(%{mode: :new, scaffold: sc}), do: %{module: sc.module, paths: sc.paths}
-  defp result(%{mode: :bugfix, bugfix: bf}), do: %{module: bf.module, paths: [bf.rule_path | Map.keys(bf.test_files)]}
+
+  defp result(%{mode: :bugfix, bugfix: bf}),
+    do: %{module: bf.module, paths: [bf.rule_path | Map.keys(bf.test_files)]}
 
   defp trim(failures), do: String.slice(failures, -3000, 3000)
 

@@ -25,7 +25,19 @@ defmodule Cev.Diag do
       # sanitized record rather than losing the line entirely.
       try do
         path = Cev.Config.run_path("diag.jsonl")
-        File.write!(path, [Jason.encode!(%{ts: System.os_time(:second), encode_error: Exception.message(e), keys: Map.keys(map)}), "\n"], [:append])
+
+        File.write!(
+          path,
+          [
+            Jason.encode!(%{
+              ts: System.os_time(:second),
+              encode_error: Exception.message(e),
+              keys: Map.keys(map)
+            }),
+            "\n"
+          ],
+          [:append]
+        )
       rescue
         _ -> :ok
       end

@@ -45,7 +45,9 @@ defmodule Cev.Pipeline.SolveTest do
 
   describe "extract_module/1" do
     test "pulls a fenced elixir block" do
-      content = "Here you go:\n\n```elixir\ndefmodule RateLimiter do\n  def check(_), do: :ok\nend\n```\nDone."
+      content =
+        "Here you go:\n\n```elixir\ndefmodule RateLimiter do\n  def check(_), do: :ok\nend\n```\nDone."
+
       assert {:ok, code} = Solve.extract_module(content)
       assert code =~ "defmodule RateLimiter do"
       refute code =~ "Here you go"

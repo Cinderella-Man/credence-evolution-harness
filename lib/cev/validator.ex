@@ -413,7 +413,9 @@ defmodule Cev.Validator do
       case Regex.replace(
              ~r/(defmodule\s+\S+\s+do\s*\n)/,
              test_code,
-             "\\1  use ExUnit.Case, async: false\n", global: false) do
+             "\\1  use ExUnit.Case, async: false\n",
+             global: false
+           ) do
         ^test_code ->
           # Regex didn't match (malformed module?) — prepend as last resort
           Logger.warning("[Validator] could not find defmodule line — prepending use ExUnit.Case")

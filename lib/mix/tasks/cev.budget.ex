@@ -46,7 +46,9 @@ defmodule Mix.Tasks.Cev.Budget do
         runway(u)
 
       {:error, :auth_expired} ->
-        Mix.shell().error("Console cookie expired — re-grab it (DevTools → Network → tokenPlan/usage → Copy as cURL).")
+        Mix.shell().error(
+          "Console cookie expired — re-grab it (DevTools → Network → tokenPlan/usage → Copy as cURL)."
+        )
 
       {:error, reason} ->
         Mix.shell().error("Could not read console usage: #{inspect(reason)}")
@@ -56,7 +58,9 @@ defmodule Mix.Tasks.Cev.Budget do
   defp detail_line do
     case MimoConsole.detail() do
       {:ok, d} ->
-        Mix.shell().info("plan: #{d.plan_name} (#{d.plan_code}) · period ends #{d.period_end} · auto-renew #{d.auto_renew}")
+        Mix.shell().info(
+          "plan: #{d.plan_name} (#{d.plan_code}) · period ends #{d.period_end} · auto-renew #{d.auto_renew}"
+        )
 
       _ ->
         :ok
@@ -79,7 +83,11 @@ defmodule Mix.Tasks.Cev.Budget do
   end
 
   defp fmt(n) when is_integer(n) do
-    n |> Integer.to_string() |> String.reverse() |> String.replace(~r/(\d{3})(?=\d)/, "\\1,") |> String.reverse()
+    n
+    |> Integer.to_string()
+    |> String.reverse()
+    |> String.replace(~r/(\d{3})(?=\d)/, "\\1,")
+    |> String.reverse()
   end
 
   defp fmt(n), do: to_string(n)

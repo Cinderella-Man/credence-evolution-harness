@@ -47,10 +47,21 @@ defmodule Mix.Tasks.Cev.Usage do
       rows_hr = n / span_h
       usd_day = cost / span_h * 24
 
-      Mix.shell().info("window: #{Float.round(span_h, 2)}h, #{n} rows → #{Float.round(rows_hr, 1)} rows/hr (#{round(rows_hr * 24)} rows/day)")
-      Mix.shell().info("est spend: #{usd(usd_day)}/day → #{usd(usd_day * 30)}/30-day month (APPROX)")
-      Mix.shell().info("=> on a $50 plan, est runway ≈ #{Float.round(50 / max(usd_day, 1.0e-9), 1)} days at this rate")
-      Mix.shell().info("(authoritative check: read MiMo console credit delta over this window instead of trusting the $ above)")
+      Mix.shell().info(
+        "window: #{Float.round(span_h, 2)}h, #{n} rows → #{Float.round(rows_hr, 1)} rows/hr (#{round(rows_hr * 24)} rows/day)"
+      )
+
+      Mix.shell().info(
+        "est spend: #{usd(usd_day)}/day → #{usd(usd_day * 30)}/30-day month (APPROX)"
+      )
+
+      Mix.shell().info(
+        "=> on a $50 plan, est runway ≈ #{Float.round(50 / max(usd_day, 1.0e-9), 1)} days at this rate"
+      )
+
+      Mix.shell().info(
+        "(authoritative check: read MiMo console credit delta over this window instead of trusting the $ above)"
+      )
     end
   end
 
@@ -60,10 +71,12 @@ defmodule Mix.Tasks.Cev.Usage do
     by_stage = Enum.group_by(usage, &stage/1)
 
     header("BY STAGE (every Mimo/CC call)")
+
     Enum.each(~w(translate solve classify implement rule-gen other), fn s ->
       calls = Map.get(by_stage, s, [])
       if calls != [], do: print_group(s, calls)
     end)
+
     print_group("TOTAL", usage)
     model_usage_recon(usage)
 
@@ -77,7 +90,11 @@ defmodule Mix.Tasks.Cev.Usage do
       Enum.group_by(per_row, fn {row, _c, _o} -> Map.get(outcome_by_row, row, "(no row stat)") end)
 
     header("BY ROW OUTCOME")
-    Mix.shell().info(pad("outcome", 22) <> pad("rows", 6) <> pad("mean $", 10) <> pad("total $", 11) <> "mean out-tok")
+
+    Mix.shell().info(
+      pad("outcome", 22) <>
+        pad("rows", 6) <> pad("mean $", 10) <> pad("total $", 11) <> "mean out-tok"
+    )
 
     by_outcome
     |> Enum.map(fn {o, rs} ->
@@ -87,7 +104,9 @@ defmodule Mix.Tasks.Cev.Usage do
     |> Enum.sort_by(fn {_o, _n, c, _t} -> -c end)
     |> Enum.each(fn {o, n, c, ot} ->
       Mix.shell().info(
-        pad(o, 22) <> pad(n, 6) <> pad(usd(c / n), 10) <> pad(usd(c), 11) <> Integer.to_string(div(ot, max(n, 1)))
+        pad(o, 22) <>
+          pad(n, 6) <>
+          pad(usd(c / n), 10) <> pad(usd(c), 11) <> Integer.to_string(div(ot, max(n, 1)))
       )
     end)
 
@@ -115,13 +134,18 @@ defmodule Mix.Tasks.Cev.Usage do
         Mix.shell().info("no rule-gen calls with usage yet.")
 
       mu_calls == [] ->
-        Mix.shell().info("result.usage total: #{usage_tot} tok — no modelUsage logged (older ledger).")
+        Mix.shell().info(
+          "result.usage total: #{usage_tot} tok — no modelUsage logged (older ledger)."
+        )
 
       true ->
         delta = Float.round(100 * (mu_tot - usage_tot) / usage_tot, 1)
         Mix.shell().info("result.usage total: #{usage_tot} tok (#{length(cc)} calls)")
         Mix.shell().info("modelUsage total:   #{mu_tot} tok (#{length(mu_calls)} calls)")
-        Mix.shell().info("Δ modelUsage vs result.usage: #{delta}%  (match your CONSOLE delta to whichever is closer)")
+
+        Mix.shell().info(
+          "Δ modelUsage vs result.usage: #{delta}%  (match your CONSOLE delta to whichever is closer)"
+        )
     end
   end
 
@@ -151,9 +175,18 @@ defmodule Mix.Tasks.Cev.Usage do
       saved = no_opp_cost - no_opp_rows * triage_per
 
       Mix.shell().info("no_opportunity: #{no_opp_rows} of #{all_rg_rows} rule-gen rows")
-      Mix.shell().info("  full-session cost on them now: #{usd(no_opp_cost)} (mean #{usd(no_opp_cost / no_opp_rows)}/row)")
-      Mix.shell().info("  triage (1 pro call, no tools) ~#{usd(triage_per)}/row → #{usd(no_opp_rows * triage_per)}")
-      Mix.shell().info("  => saves #{usd(saved)} of #{usd(rg_total)} rule-gen = #{round(100 * saved / rg_total)}% off rule-gen (#{Float.round(rg_total / max(rg_total - saved, 1.0e-9), 2)}x)")
+
+      Mix.shell().info(
+        "  full-session cost on them now: #{usd(no_opp_cost)} (mean #{usd(no_opp_cost / no_opp_rows)}/row)"
+      )
+
+      Mix.shell().info(
+        "  triage (1 pro call, no tools) ~#{usd(triage_per)}/row → #{usd(no_opp_rows * triage_per)}"
+      )
+
+      Mix.shell().info(
+        "  => saves #{usd(saved)} of #{usd(rg_total)} rule-gen = #{round(100 * saved / rg_total)}% off rule-gen (#{Float.round(rg_total / max(rg_total - saved, 1.0e-9), 2)}x)"
+      )
     else
       Mix.shell().info("no no_opportunity rows yet — run more rows.")
     end
@@ -166,7 +199,13 @@ defmodule Mix.Tasks.Cev.Usage do
       by_outcome |> Map.get(key, []) |> Enum.map(fn {_r, c, _o} -> c end) |> Enum.sum()
     end
 
-    total = by_outcome |> Map.values() |> List.flatten() |> Enum.map(fn {_r, c, _o} -> c end) |> Enum.sum()
+    total =
+      by_outcome
+      |> Map.values()
+      |> List.flatten()
+      |> Enum.map(fn {_r, c, _o} -> c end)
+      |> Enum.sum()
+
     no_opp = cost.("no_opportunity")
 
     header("HEADLINE")
@@ -182,10 +221,14 @@ defmodule Mix.Tasks.Cev.Usage do
   defp print_group(label, calls) do
     Mix.shell().info(
       pad(label, 10) <>
-        "calls=" <> pad(length(calls), 7) <>
-        "in=" <> pad(sum_tok(calls, "in"), 11) <>
-        "cache_rd=" <> pad(sum_tok(calls, "cache_read"), 12) <>
-        "out=" <> pad(sum_tok(calls, "out"), 10) <>
+        "calls=" <>
+        pad(length(calls), 7) <>
+        "in=" <>
+        pad(sum_tok(calls, "in"), 11) <>
+        "cache_rd=" <>
+        pad(sum_tok(calls, "cache_read"), 12) <>
+        "out=" <>
+        pad(sum_tok(calls, "out"), 10) <>
         "est=" <> usd(sum_cost(calls))
     )
   end

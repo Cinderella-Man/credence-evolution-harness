@@ -20,6 +20,9 @@ defmodule Mix.Tasks.Cev.Preflight do
   def run(_args) do
     {:ok, _} = Application.ensure_all_started(:cev)
     Cev.Preflight.run!()
-    Mix.shell().info("\n✓ preflight OK — ready to run: CEV_RUN=1 CEV_SOLVE_PROVIDER=xiaomi_mimo_2_5_pro mix run --no-halt")
+
+    Mix.shell().info(
+      "\n✓ preflight OK — ready to run: CEV_RUN=1 CEV_SOLVE_PROVIDER=xiaomi_mimo_2_5_pro mix run --no-halt"
+    )
   end
 end
