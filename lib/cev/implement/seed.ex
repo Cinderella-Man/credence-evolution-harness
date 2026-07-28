@@ -171,10 +171,14 @@ defmodule Cev.Implement.Seed do
 
   defp diagnostic_block(%{phase: :semantic, real_diagnostic: d}) when is_binary(d) and d != "" do
     """
-    ## REAL captured diagnostic (use VERBATIM in the test diag + key match? on it)
+    ## REAL captured diagnostic(s) (use VERBATIM in the test diag + key match? on it)
     #{fence(d)}
     A fabricated diagnostic passes the gate but ships a DEAD rule (the live
-    pipeline feeds Code.with_diagnostics output). Copy this %{message,position,severity}.
+    pipeline feeds Code.with_diagnostics output). Copy the %{message,position,severity}
+    VERBATIM. If more than one is listed above, they are every diagnostic no live
+    rule claimed, one per line — pick the ONE your rule targets and key `match?`
+    on that one's distinctive text. Do not try to cover several at once: one
+    diagnostic has one owner (docs/20).
 
     ## match? must key on the SPECIFIC message, not the generic wrapper (HARD)
     Match the DISTINCTIVE substring of THIS diagnostic (e.g. the exact

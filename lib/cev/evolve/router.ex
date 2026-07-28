@@ -402,14 +402,22 @@ defmodule Cev.Evolve.Router do
 
   # ── Helpers ──────────────────────────────────────────────────────────────
 
-  # Pull the real `%{message, position, severity, ...}` from the last
-  # `[credence_fix] no rule matched diagnostic: %{…}` line (T1.3b).
-  defp extract_diagnostic(log) do
-    Regex.scan(~r/no rule matched diagnostic:\s*(%\{.*\})/, log)
-    |> List.last()
-    |> case do
-      [_, diag] -> diag
-      _ -> nil
+  # Pull the real `%{message, position, severity, ...}` maps out of the
+  # `[credence_fix] no rule matched diagnostic: %{…}` lines (T1.3b).
+  #
+  # ALL of them, not just the last (docs/22 T4.3). A source that fails to compile
+  # commonly emits several unmatched diagnostics, and the last one is an artifact
+  # of emission order, not a judgment about which is worth a rule. Handing over
+  # one of several taught the implementer to key on whichever happened to be
+  # printed last — and the rest, which nothing claimed, stayed invisible.
+  @doc false
+  # Public for tests: `fail/1` and the surrounding pipeline cannot be exercised
+  # directly, so the extraction is what gets pinned (the `needs_cc_token?/1`
+  # precedent).
+  def extract_diagnostic(log) do
+    case Regex.scan(~r/no rule matched diagnostic:\s*(%\{.*\})/, log) do
+      [] -> nil
+      matches -> matches |> Enum.map(fn [_, diag] -> diag end) |> Enum.uniq() |> Enum.join("\n")
     end
   end
 

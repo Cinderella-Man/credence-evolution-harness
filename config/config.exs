@@ -234,7 +234,18 @@ config :cev,
   }
 
 config :logger,
-  level: :debug
+  level: :debug,
+  # Elixir truncates a log message at 8096 bytes by default. This harness does
+  # not merely READ these logs, it PARSES them as data — `Cev.AppliedRules`
+  # reads the `APPLIED_RULES: [...]` line and `Cev.Evolve.Router` reads the
+  # captured diagnostics out of them. A row that fires ~150 rules puts that line
+  # within a few hundred bytes of the cap, so the evidence was being cut mid-list
+  # and the whole line then discarded (docs/22 T4.3).
+  #
+  # `:infinity` rather than a bigger number: any finite cap is a silent data loss
+  # waiting for a longer row, and the size here is bounded by what credence
+  # prints about one file, not by anything unbounded.
+  truncate: :infinity
 
 if File.exists?("config/secrets.exs") do
   import_config "secrets.exs"

@@ -34,7 +34,14 @@ defmodule Cev.AppliedRules do
   """
 
   # APPLIED_RULES: [ ... ]  — capture the bracketed list body.
-  @line ~r/APPLIED_RULES:\s*\[(?<body>.*)\]/
+  # The closing `]` is OPTIONAL. It used to be required, so a line cut mid-list
+  # matched nothing and EVERY rule on that row was discarded — losing most of the
+  # evidence precisely on the busiest rows, which are the ones worth reading.
+  # Logger's truncation is fixed at source (`config :logger, truncate: :infinity`),
+  # but a log can be clipped by other hands too (the Gate's own `tail/1`), and the
+  # cost asymmetry is stark: parsing the pairs that survived is strictly better
+  # than dropping the row.
+  @line ~r/APPLIED_RULES:\s*\[(?<body>.*?)(?:\]|$)/
   # {Credence.Pattern.Foo, 3} or {Credence.Pattern.Foo, :reverted | :crashed | …}
   @pair ~r/\{\s*(?<mod>[A-Z][A-Za-z0-9_.]*)\s*,\s*(?<count>:[a-z][a-z0-9_]*|\d+)\s*\}/
 
