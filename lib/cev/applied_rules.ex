@@ -2,22 +2,48 @@ defmodule Cev.AppliedRules do
   @moduledoc """
   Parse the closed set of rules that actually fired from a row log (08 T2.3).
 
-  Credence's fix script emits one `APPLIED_RULES: [{Module, count | :reverted}]`
-  line per solve attempt (workspace.ex). `parse/1` collects every entry across
-  every attempt **un-deduped** (intermediate over-firing matters — a rule can
+  Credence's fix script emits one `APPLIED_RULES: [{Module, outcome}]` line per
+  solve attempt (workspace.ex). `parse/1` collects every entry across every
+  attempt **un-deduped** (intermediate over-firing matters — a rule can
   over-fire on an early attempt and be masked by a later rewrite).
 
   Drives:
     * the `:reverted` deterministic bugfix lane (`reverted/1`, 07 §3.9),
     * BUGFIX closed-set validation + option-shaping (`modules/1`, 07 §3.3/§4.3).
+
+  ## Why the outcome pattern is generic (T3.2)
+
+  An outcome is `non_neg_integer()` or an atom from `t:Credence.rule_outcome/0`,
+  which has grown past `:reverted` to `:rolled_back`, `:patch_rejected`,
+  `:crashed` and `:no_op`. This regex used to accept `:reverted|\\d+` and
+  nothing else — and `Regex.scan/3` does not fail on a pair it cannot match, it
+  **skips** it. So every one of those newer outcomes was silently discarded here.
+
+  That is not a cosmetic loss. A dropped pair removes the module from
+  `modules/1`, so it is absent from the closed set the classifier is allowed to
+  name, and `Cev.Classify`'s `:rule_name_not_in_closed_set` then *rejects* a
+  correct `BUGFIX_RULE` report about it. A rule that crashed — the case most
+  worth reporting — was the case least reportable.
+
+  The atom branch is therefore deliberately **generic** rather than an
+  enumeration of today's vocabulary: pinning the list would restore exactly this
+  failure mode the next time credence adds an outcome, and the whole point is
+  that this side must never again lose an outcome it has not heard of. Credence
+  pins the closed set on its own side (`Credence.rule_outcomes/0` and its
+  contract test) — that is where a new member is meant to become visible.
   """
 
   # APPLIED_RULES: [ ... ]  — capture the bracketed list body.
   @line ~r/APPLIED_RULES:\s*\[(?<body>.*)\]/
-  # {Credence.Pattern.Foo, 3}  or  {Credence.Pattern.Foo, :reverted}
-  @pair ~r/\{\s*(?<mod>[A-Z][A-Za-z0-9_.]*)\s*,\s*(?<count>:reverted|\d+)\s*\}/
+  # {Credence.Pattern.Foo, 3} or {Credence.Pattern.Foo, :reverted | :crashed | …}
+  @pair ~r/\{\s*(?<mod>[A-Z][A-Za-z0-9_.]*)\s*,\s*(?<count>:[a-z][a-z0-9_]*|\d+)\s*\}/
 
-  @type entry :: {module(), non_neg_integer() | :reverted}
+  @typedoc """
+  A fired rule and what the round did with it. The atom half mirrors
+  `t:Credence.rule_outcome/0`; it is typed as `atom()` rather than an
+  enumeration on purpose — see the moduledoc.
+  """
+  @type entry :: {module(), non_neg_integer() | atom()}
 
   @doc """
   Entries for row `index`, preferring the sidecar over the log.
@@ -47,7 +73,16 @@ defmodule Cev.AppliedRules do
     |> Enum.flat_map(&parse_line/1)
   end
 
-  @doc "The `:reverted` culprits (Pattern rules that broke compilation, 07 §3.9)."
+  @doc """
+  The `:reverted` culprits (Pattern rules that broke compilation, 07 §3.9).
+
+  Deliberately still only `:reverted`, even though `:crashed` and
+  `:patch_rejected` now survive parsing. Widening this changes *routing* — which
+  rows open the deterministic bugfix lane at `Cev.Evolve.Router` — and that is a
+  behavioural decision to take on its own evidence, not a side effect of
+  repairing the parser. The two are separable precisely because the parse fix
+  only stops discarding data.
+  """
   @spec reverted([entry()]) :: [module()]
   def reverted(entries) do
     for {mod, :reverted} <- entries, do: mod
@@ -71,7 +106,7 @@ defmodule Cev.AppliedRules do
     end
   end
 
-  defp to_entry([mod, ":reverted"]), do: {module_atom(mod), :reverted}
+  defp to_entry([mod, ":" <> outcome]), do: {module_atom(mod), String.to_atom(outcome)}
   defp to_entry([mod, count]), do: {module_atom(mod), String.to_integer(count)}
 
   # Build the module atom from its source name without requiring it loaded

@@ -34,7 +34,11 @@ defmodule Cev.Workspace do
   # Credence fix script. Emits FIXED / NO_CHANGES, then the full
   # `applied_rules` list (the before/after fix trace the rule-gen agent reads)
   # and any remaining unfixable issues. `applied_rules` entries are
-  # `{module, count | :reverted}` with full module names.
+  # `{module, outcome}` with full module names, where outcome is a finding count
+  # or one of `Credence.rule_outcomes/0` — `:reverted`, `:rolled_back`,
+  # `:patch_rejected`, `:crashed`, `:no_op`. `Cev.AppliedRules` parses them, and
+  # its regex accepts any outcome atom precisely so this list can grow without
+  # the new member being silently dropped there (T3.2).
   @credence_fix_script ~S"""
   code = File.read!("lib/solution.ex")
   result = Credence.fix(code)
@@ -192,7 +196,12 @@ defmodule Cev.Workspace do
     System.cmd("mix", ["deps.get"], cd: path, stderr_to_stdout: true)
 
     for env <- ~w(dev test) do
-      System.cmd("mix", ["deps.compile"], cd: path, stderr_to_stdout: true, env: [{"MIX_ENV", env}])
+      System.cmd("mix", ["deps.compile"],
+        cd: path,
+        stderr_to_stdout: true,
+        env: [{"MIX_ENV", env}]
+      )
+
       # Compile the (empty) workspace app once so `workspace.app` exists; the
       # credence-fix step runs `mix run --no-compile` (to tolerate a broken
       # solution.ex) and needs the app file present.
