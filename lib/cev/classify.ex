@@ -148,10 +148,16 @@ defmodule Cev.Classify do
 
   defp check_decision(%Spec{decision: :no_action}, _ctx), do: :ok
 
-  defp check_decision(%Spec{decision: :bugfix_rule, rule_name: name}, ctx) do
+  defp check_decision(%Spec{decision: :bugfix_rule, rule_name: name} = s, ctx) do
     cond do
       is_nil(name) ->
         {:error, :bugfix_missing_rule_name}
+
+      # T4.2a. A BUGFIX whose BEFORE and AFTER are the same text describes no
+      # change at all. It reads as a filled-in report and costs a full implementer
+      # run to discover that there is nothing to implement.
+      not is_nil(s.before) and s.before == s.after ->
+        {:error, :bugfix_before_equals_after}
 
       name not in ctx.closed ->
         {:error, {:rule_name_not_in_closed_set, name}}

@@ -163,6 +163,20 @@ defmodule Cev.Classify.Parser do
 
   defp blank_to_nil(nil), do: nil
 
-  defp blank_to_nil(s) when is_binary(s),
-    do: if(String.trim(s) == "", do: nil, else: String.trim(s))
+  defp blank_to_nil(s) when is_binary(s) do
+    trimmed = String.trim(s)
+
+    if empty_body?(trimmed), do: nil, else: trimmed
+  end
+
+  # A section whose body is only rule characters is EMPTY, not content.
+  #
+  # The model fills an unused section with a markdown horizontal rule — `===`,
+  # `---` — because the template shows sections separated by them. `String.trim/1`
+  # leaves that intact, so `"==="` was passed through as a real BEFORE, and a
+  # downstream `parses?/2` then failed on it in a way that read as the model
+  # proposing nonsense. One instance burned an 80-turn implementer session
+  # (docs/22 T4.2b).
+  defp empty_body?(""), do: true
+  defp empty_body?(body), do: Regex.match?(~r/\A[-=_*\s]+\z/, body)
 end
