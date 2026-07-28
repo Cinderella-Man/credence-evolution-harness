@@ -27,6 +27,17 @@ defmodule Cev.Evolve.Gate do
                                    `{:corpus, :over_fire|:narrowing, …}` and the
                                    caller preserves the patch + a drop-or-accept report.
 
+  Phase 2 is **dispatched on the staged paths** (`Cev.Evolve.CorpusDispatch`,
+  docs/13 P3). Syntax/Semantic-only candidates skip it outright — every corpus
+  layer analyzes through `Credence.Pattern`, and 150 of this harness's 155
+  committed candidates are that case. A candidate that stages exactly one
+  Pattern rule plus its own tests first gets a ~12 s rule-scoped over-fire scan
+  (`mix credence.corpus --only-rule`); a drift there is booked as a corpus
+  reject immediately, without the 234 s phase or the classifier's re-runs. A
+  clean scoped scan is *not* a clean corpus — it covers over-firing only, not
+  fix-safety / scope-parity / fix-breakage — so it falls through to the full
+  phase rather than replacing it.
+
   Renames / supersession-with-replacement (delete+add) pass: the *add* side
   touches `lib/` + `test/` and the mutation check runs on the new test.
   **Standalone pure deletion is rejected + escalated** — removing a rule is a
@@ -69,6 +80,7 @@ defmodule Cev.Evolve.Gate do
 
   alias Cev.Config
   alias Cev.Evolve.Corpus
+  alias Cev.Evolve.CorpusDispatch
   alias Cev.RowLog
 
   # Positive evidence that ExUnit reached `:suite_finished` — i.e. the suite RAN.
@@ -118,7 +130,7 @@ defmodule Cev.Evolve.Gate do
          :ok <- check_scope(entries),
          :ok <- check_not_pure_deletion(entries),
          :ok <- check_mutation(clone, entries),
-         :ok <- check_full_suite(clone) do
+         :ok <- check_full_suite(clone, entries) do
       {:ok, summarize(entries)}
     else
       # An environmental failure is NOT a rejection of the candidate — the
@@ -271,7 +283,7 @@ defmodule Cev.Evolve.Gate do
 
   # ── (a) full suite ──────────────────────────────────────────────────
 
-  defp check_full_suite(clone) do
+  defp check_full_suite(clone, entries) do
     # Fail-fast: the corpus-free suite (all meta + cross-rule invariants —
     # DSL-safety, equivalence/fix/check-meta, scope-parity) catches every
     # non-corpus reject BEFORE the ~4-min over-firing corpus scan. A red here is
@@ -285,7 +297,79 @@ defmodule Cev.Evolve.Gate do
         {:reject, :full_suite_red}
 
       {:green, _out} ->
-        check_corpus(clone)
+        check_corpus(clone, entries)
+    end
+  end
+
+  # ── (a2) corpus, dispatched on the staged paths (docs/13 P3) ────────
+  #
+  # `Cev.Evolve.CorpusDispatch.plan/2` reads the staged diff and answers one of
+  # three things. Its moduledoc carries the evidence for each; the short version:
+  #
+  #   :skip   — Syntax/Semantic only. Every corpus layer analyzes through
+  #             `Credence.Pattern`, so nothing it looks at can have changed.
+  #             150 of this harness's 155 committed candidates are this case.
+  #   :scoped — exactly one Pattern rule + its own tests. `--only-rule` answers
+  #             the over-firing question for it in ~12 s instead of 234 s, and
+  #             a drift there is a reject we can book immediately.
+  #   :full   — anything shared, anything multi-rule, anything unclear.
+  defp check_corpus(clone, entries) do
+    case CorpusDispatch.plan(entries, clone) do
+      {:skip, why} ->
+        Logger.info("[Gate] corpus phase SKIPPED — #{why}")
+        :ok
+
+      {:scoped, module, path} ->
+        Logger.info("[Gate] corpus: rule-scoped pre-gate on #{inspect(module)} (#{path})")
+        scoped_pre_gate(clone, module)
+
+      {:full, why} ->
+        Logger.info("[Gate] corpus: full scan — #{why}")
+        full_corpus(clone)
+    end
+  end
+
+  # The scoped scan answers ONE of the four corpus layers — over-firing. A DRIFT
+  # there is that layer's assertion already red (same sweep, same identities,
+  # same snapshot, restricted to one rule), so reject now: 12 s instead of 234 s
+  # plus the ~3 min of re-runs `Corpus.classify_failure/1` would pay. Skipping
+  # that classifier is sound here because the only thing it establishes beyond
+  # what we already have is "the corpus-free suite is green", which phase 1 just
+  # proved, and the drift is already attributed to this candidate's rule.
+  #
+  # A CLEAN scoped scan is not a clean corpus: fix-safety, scope-parity and
+  # fix-breakage are untouched by it — and scope-parity fires hardest exactly on
+  # a rule with zero findings (it flags a fix that rewrites code the check leaves
+  # clean). So clean falls through to the full phase, as does inconclusive. The
+  # fast path is an optimization, never the authority (docs/13 §5.1).
+  defp scoped_pre_gate(clone, module) do
+    case CorpusDispatch.scan(clone, module) do
+      {:drift, %{new: new, gone: gone}} ->
+        kind = if new != [], do: :over_fire, else: :narrowing
+
+        Logger.warning(
+          "[Gate] corpus scoped pre-gate DRIFT (#{kind}) for #{inspect(module)}: " <>
+            "#{length(new)} new, #{length(gone)} gone — rejecting without the full phase"
+        )
+
+        detail = %{kind: kind, new: new, gone: gone, patch: staged_patch(clone)}
+        {:reject, {:corpus, kind, detail}}
+
+      {:clean, %{live: live, accepted: accepted}} ->
+        Logger.info(
+          "[Gate] corpus scoped pre-gate CLEAN (live=#{live} accepted=#{accepted}) — " <>
+            "running the full phase for fix-safety / scope-parity / fix-breakage"
+        )
+
+        full_corpus(clone)
+
+      {:inconclusive, detail} ->
+        Logger.warning(
+          "[Gate] corpus scoped pre-gate INCONCLUSIVE (#{inspect(detail.reason)}, " <>
+            "exit #{detail.exit}) — falling back to the full corpus phase"
+        )
+
+        full_corpus(clone)
     end
   end
 
@@ -302,7 +386,7 @@ defmodule Cev.Evolve.Gate do
   # Capture the agent's diff BEFORE classification touches the snapshot, so a
   # corpus-only reject (over-fire to drop / narrowing to accept) is preserved
   # + re-appliable by the maintainer instead of silently discarded.
-  defp check_corpus(clone) do
+  defp full_corpus(clone) do
     case suite_phase(clone, :corpus) do
       {:did_not_run, out} ->
         {:reject, environmental(clone, :corpus, out)}

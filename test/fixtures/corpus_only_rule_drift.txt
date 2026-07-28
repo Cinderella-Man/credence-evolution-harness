@@ -1,0 +1,13 @@
+[only-rule] no_uniq_then_count — scanned 20076 file(s) across 500 corpus entries in 9.5s
+
+NEW — not previously accepted (a candidate OVER-FIRE — investigate!):
+  • archethic/lib/archethic/election.ex:592  no_uniq_then_count
+        591 |       |> Enum.map(&String.slice(&1.geo_patch, 0, 2))
+      > 592 |       |> Enum.uniq()
+        593 |       |> length()
+
+GONE — pinned but no longer firing (a rule narrowed / was removed):
+  (none)
+
+[only-rule] RESULT=drift rule=no_uniq_then_count live=19 accepted=18 new=1 gone=0
+** (Mix) corpus drift for no_uniq_then_count: 1 new, 0 gone. If this is expected, review it and re-pin with `mix credence.corpus --update-snapshot`.

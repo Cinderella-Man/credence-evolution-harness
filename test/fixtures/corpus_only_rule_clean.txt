@@ -1,0 +1,2 @@
+[only-rule] no_uniq_then_count — scanned 20076 file(s) across 500 corpus entries in 9.2s
+[only-rule] RESULT=clean rule=no_uniq_then_count live=19 accepted=19
