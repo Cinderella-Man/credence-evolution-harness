@@ -15,6 +15,8 @@ defmodule Cev.Implement do
   `:repair?`).
   """
 
+  require Logger
+
   alias Cev.{ClaudeCode, Config, LLM, Pi}
   alias Cev.Implement.{Output, Seed}
 
@@ -57,16 +59,51 @@ defmodule Cev.Implement do
 
     case agent.(prompt, cwd: ctx.clone, row: ctx[:row]) do
       {:ok, _result} ->
-        canonicalize_fix_tests(ctx)
-        normalize_test_heredocs(ctx)
+        # H9 / T4.5 row 6. An agent that made 25 read-only steps and never wrote
+        # anything leaves the scaffold placeholders exactly as we generated them.
+        # Running the tests then fails — of course it does, the stub is a stub —
+        # and the row was booked `cc_tests_red`, a MERIT failure. That poisons
+        # decisions.md with a dead-end idea nobody ever attempted. Checked BEFORE
+        # the canonicalisers, which rewrite files themselves.
+        if wrote_nothing?(ctx) do
+          Logger.warning("[Implement] agent finished having written nothing — null run")
+          {:gave_up, {tag, "no_writes"}}
+        else
+          canonicalize_fix_tests(ctx)
+          normalize_test_heredocs(ctx)
 
-        case focused_test(ctx) do
-          :pass -> {:ok, result(ctx)}
-          {:fail, failures} -> {:gave_up, {tests_red_tag(tag), String.slice(failures, 0, 400)}}
+          case focused_test(ctx) do
+            :pass ->
+              {:ok, result(ctx)}
+
+            {:fail, leg, failures} ->
+              {:gave_up, {tests_red_tag(tag), "[#{leg}] " <> trim(failures)}}
+          end
         end
 
       {:gave_up, reason} ->
         {:gave_up, {tag, reason}}
+    end
+  end
+
+  # True when every file we handed the agent is byte-identical to what we wrote.
+  # A missing file counts as CHANGED (it was deleted), not as a null run — the
+  # question is "did the agent do anything", not "is the tree pristine".
+  defp wrote_nothing?(%{mode: :new, scaffold_files: files, clone: clone}) do
+    files != %{} and Enum.all?(files, &unchanged?(clone, &1))
+  end
+
+  defp wrote_nothing?(%{mode: :bugfix, bugfix: bf, clone: clone}) do
+    unchanged?(clone, {bf.rule_path, bf.rule_source}) and
+      Enum.all?(bf.test_files, &unchanged?(clone, &1))
+  end
+
+  defp wrote_nothing?(_ctx), do: false
+
+  defp unchanged?(clone, {rel, original}) do
+    case File.read(Path.join(clone, rel)) do
+      {:ok, current} -> current == original
+      {:error, _} -> false
     end
   end
 
@@ -151,8 +188,11 @@ defmodule Cev.Implement do
               :pass ->
                 {:ok, result(ctx)}
 
-              {:fail, failures} ->
-                retry(ctx, seed, content, failures, attempt, out_total, emit)
+              # The leg is prepended so the retry seed tells the model WHICH bar
+              # it missed: its own tests, or a cross-rule invariant it has never
+              # been told about. Those need different repairs.
+              {:fail, leg, failures} ->
+                retry(ctx, seed, content, "[#{leg}] " <> failures, attempt, out_total, emit)
             end
 
           {:error, reason} ->
@@ -174,7 +214,9 @@ defmodule Cev.Implement do
 
   defp retry(ctx, seed, last, failures, attempt, out_total, emit) do
     if attempt >= Config.rule_gen_max_retries() do
-      {:gave_up, {:retries_exhausted, String.slice(failures, 0, 400)}}
+      # The TAIL, not the head: ExUnit prints its failure detail at the end, so
+      # the first 400 bytes were reliably the least informative 400 bytes.
+      {:gave_up, {:retries_exhausted, trim(failures)}}
     else
       # Flat retry: seed + the LAST attempt + the LAST failures (not the whole
       # history) — keeps per-retry size flat, not quadratic (§5.5).
@@ -249,9 +291,20 @@ defmodule Cev.Implement do
   # in-loop — the `:llm` driver retries on the failure, the agent driver is told to
   # run it too (Seed) — instead of dying at the Gate. The ~8-min corpus stays
   # Gate-only; here it is excluded so the loop never re-sends its output.
+  # Reports WHICH leg failed. Both legs used to collapse into one 400-character
+  # slice with no exit code and no attribution, so "the rule's own tests are red"
+  # and "the rule trips a cross-rule invariant" — different problems needing
+  # different repairs — arrived at the router indistinguishable (rows 100/119).
   defp focused_test(%{clone: clone} = ctx) do
-    with :pass <- run_mix_test(clone, test_paths(ctx)) do
-      run_mix_test(clone, ["--exclude", "corpus"])
+    case run_mix_test(clone, test_paths(ctx)) do
+      :pass ->
+        case run_mix_test(clone, ["--exclude", "corpus"]) do
+          :pass -> :pass
+          {:fail, out} -> {:fail, :cross_rule_invariants, out}
+        end
+
+      {:fail, out} ->
+        {:fail, :own_tests, out}
     end
   end
 

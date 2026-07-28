@@ -257,13 +257,53 @@ defmodule Cev.Evolve.Router do
   # `{:classifier_errors, reason, _}` and `{:gave_up, reason}`, so one clause
   # covers both stages. Anything else (validation re-ask, retries_exhausted,
   # ceilings, scaffold) is `:other`.
-  defp rulegen_error_class({:llm_error, inner}), do: Budget.classify_error(inner)
+  @doc false
+  # Public for tests: the Router's stages cannot be exercised directly, and this
+  # is the classification that decides whether a row's failure is booked against
+  # the IDEA or against the machine (the `needs_cc_token?/1` precedent).
+  def rulegen_error_class({:llm_error, inner}), do: Budget.classify_error(inner)
   # A pi/agent timeout (wall or idle) is infra/transient, NOT a dead-end idea —
   # don't poison decisions.md with it; re-run next pass (bounded by the per-row
   # too_slow limit) like any transient (docs/10).
-  defp rulegen_error_class({:pi, r}) when r in ["timeout", "idle_timeout"], do: :transient
-  defp rulegen_error_class({:cc, r}) when r in ["timeout", "idle_timeout"], do: :transient
-  defp rulegen_error_class(_), do: :other
+  def rulegen_error_class({:pi, r}) when r in ["timeout", "idle_timeout"], do: :transient
+  def rulegen_error_class({:cc, r}) when r in ["timeout", "idle_timeout"], do: :transient
+
+  # H9 / T4.5. An agent driver reports its failures as a STRING, so a quota kill
+  # or a provider refusal arrived here as `{:cc, "…429…"}` and fell to `:other` —
+  # i.e. was booked as a merit failure of the idea. `Budget.classify_error/1`
+  # already treats an HTTP 429 as transient, but only for `{:http, 429, _}`; the
+  # agent path never produces that shape (row 55).
+  #
+  # A null run is transient for the same reason: the agent wrote nothing, so
+  # there is no attempt to judge (row 6).
+  def rulegen_error_class({tag, reason}) when tag in [:pi, :cc] and is_binary(reason) do
+    if environmental_agent_failure?(reason), do: :transient, else: :other
+  end
+
+  def rulegen_error_class(_), do: :other
+
+  @quota_markers ["429", "rate limit", "rate_limit", "too many requests", "quota", "overloaded"]
+
+  # Keyed on the refusal STRING because that is all a provider gives us (row 169).
+  # Deliberately narrow: these are phrases a model uses about itself, not phrases
+  # that appear in Elixir compiler output, so they cannot collide with a genuine
+  # test failure being quoted back.
+  @refusal_markers [
+    "i cannot assist",
+    "i can't assist",
+    "i cannot help with",
+    "i'm unable to help",
+    "i am unable to help",
+    "cannot comply"
+  ]
+
+  defp environmental_agent_failure?(reason) do
+    down = String.downcase(reason)
+
+    down == "no_writes" or
+      Enum.any?(@quota_markers, &String.contains?(down, &1)) or
+      Enum.any?(@refusal_markers, &String.contains?(down, &1))
+  end
 
   defp gate(index, decision_text, clone, opts) do
     check = Keyword.get(opts, :gate, &Gate.check/1)
