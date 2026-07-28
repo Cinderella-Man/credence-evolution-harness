@@ -17,12 +17,25 @@ defmodule Cev.Classify do
       input) — at classify-time we parse only, to avoid in-VM module pollution;
     * `assumptions` ⊆ the registry (unknown ⇒ invalid → re-ask);
     * `SWITCH_PROPOSAL` ⇒ a `proposed_switch` is present.
+
+  ## Verdict memory (H8)
+
+  A successful classification is appended to `Cev.Classify.Verdicts`, keyed by
+  the task the row came from, and the prior verdicts for that task are inlined
+  into the prompt. This runs entirely inside this stage — no Router or
+  Orchestrator change — because the row log the Router already hands us carries
+  the task name in the orchestrator's own `[idx=N] task=…` line, above the
+  `===SOLVE_BOUNDARY===` (so it never reaches the model as content).
+
+  It is advisory: a missing/unreadable store, or a log without that line, means
+  "no memory", never a failed classification, and nothing about the memory can
+  skip or veto a classification.
   """
 
   require Logger
 
   alias Cev.{AppliedRules, Credence, Distill, LLM, RulePaths}
-  alias Cev.Classify.{Parser, Prompt, Spec}
+  alias Cev.Classify.{Parser, Prompt, Spec, Verdicts}
   alias Cev.Evolve.Ledger
 
   @snake ~r/^[a-z][a-z0-9_]*$/
@@ -35,13 +48,22 @@ defmodule Cev.Classify do
     * `:llm` — a 2-arity fn `(user, system) -> {:ok|:truncated, content, usage} | {:error, _}`
       (test seam; defaults to `LLM.for_stage(:classify, …)`).
     * `:clone` — clone path for rule resolution.
+    * `:task_key` — override the H8 verdict-memory key (defaults to deriving it
+      from the log; `nil` disables the memory for this call).
+    * `:verdicts_path` / `:task_root` — `Cev.Classify.Verdicts` overrides (tests).
   """
   def run(log, solve_outcome, opts \\ []) when solve_outcome in [:solved, :failed] do
     distilled = Distill.distill(log)
-    closed = Keyword.get_lazy(opts, :closed_set, fn -> log |> AppliedRules.parse() |> AppliedRules.modules() end)
+
+    closed =
+      Keyword.get_lazy(opts, :closed_set, fn ->
+        log |> AppliedRules.parse() |> AppliedRules.modules()
+      end)
+
     assumptions = Keyword.get_lazy(opts, :assumptions, fn -> Credence.assumptions() end)
     ledger = Keyword.get_lazy(opts, :ledger, fn -> Ledger.read() end)
     clone = Keyword.get(opts, :clone, Cev.Config.credence_clone())
+    task_key = Keyword.get_lazy(opts, :task_key, fn -> Verdicts.key_from_log(log, opts) end)
 
     ctx = %{
       offered: Prompt.offered_decisions(closed),
@@ -60,13 +82,26 @@ defmodule Cev.Classify do
         assumptions: assumptions,
         solve_outcome: solve_outcome,
         rule_index: rule_index,
-        reference: Keyword.get(opts, :reference)
+        reference: Keyword.get(opts, :reference),
+        verdict_history: Verdicts.history(task_key, opts)
       )
 
     llm = Keyword.get(opts, :llm, &default_llm/2)
 
-    attempt(user, Prompt.system(), llm, ctx, 1)
+    user
+    |> attempt(Prompt.system(), llm, ctx, 1)
+    |> remember(task_key, opts)
   end
+
+  # Record ONLY a spec that survived the validation gates: a malformed reply that
+  # burned its one re-ask is a classifier error, not a judgment about the task,
+  # and writing it would teach the next pass a verdict nobody reached.
+  defp remember({:ok, spec} = result, task_key, opts) do
+    Verdicts.record(task_key, spec, opts)
+    result
+  end
+
+  defp remember(result, _task_key, _opts), do: result
 
   # ── Attempt + one re-ask ────────────────────────────────────────────────
 
@@ -91,7 +126,11 @@ defmodule Cev.Classify do
 
   defp reask_or_fail(user, system, llm, ctx, 1, reason, _content) do
     Logger.info("[Classify] re-ask after invalid spec: #{inspect(reason)}")
-    reask_user = user <> "\n\n## YOUR PREVIOUS REPLY WAS INVALID\nFix this and re-send the full spec: #{inspect(reason)}\n"
+
+    reask_user =
+      user <>
+        "\n\n## YOUR PREVIOUS REPLY WAS INVALID\nFix this and re-send the full spec: #{inspect(reason)}\n"
+
     attempt(reask_user, system, llm, ctx, 2)
   end
 
@@ -111,10 +150,17 @@ defmodule Cev.Classify do
 
   defp check_decision(%Spec{decision: :bugfix_rule, rule_name: name}, ctx) do
     cond do
-      is_nil(name) -> {:error, :bugfix_missing_rule_name}
-      name not in ctx.closed -> {:error, {:rule_name_not_in_closed_set, name}}
-      match?({:error, _}, RulePaths.resolve(name, ctx.clone)) -> {:error, {:rule_name_unresolvable, name}}
-      true -> :ok
+      is_nil(name) ->
+        {:error, :bugfix_missing_rule_name}
+
+      name not in ctx.closed ->
+        {:error, {:rule_name_not_in_closed_set, name}}
+
+      match?({:error, _}, RulePaths.resolve(name, ctx.clone)) ->
+        {:error, {:rule_name_unresolvable, name}}
+
+      true ->
+        :ok
     end
   end
 
@@ -127,7 +173,10 @@ defmodule Cev.Classify do
     end
   end
 
-  defp check_decision(%Spec{decision: :switch_proposal, proposed_switch: ps, before: before}, _ctx) do
+  defp check_decision(
+         %Spec{decision: :switch_proposal, proposed_switch: ps, before: before},
+         _ctx
+       ) do
     cond do
       is_nil(ps) -> {:error, :switch_proposal_missing_switch}
       is_nil(before) -> {:error, :switch_proposal_missing_before}
