@@ -30,6 +30,17 @@ quality of the rules it generates. The sister document
 [`credence/docs/12-improvement-proposals.md`](../../credence/docs/12-improvement-proposals.md)
 covers the linter side; items that span both are cross-referenced as `C#`.
 
+> **⛔ TRACKING MOVED (2026-07-28). This file is the SPEC document; per-item
+> status is NOT maintained here.** All open work for this repo — remaining
+> H-items with their docs/14 and escalation-ledger corrections, the LD-items,
+> the BUGFIX-lane evidence gates, the STATUS.md interlock, the salvage
+> integration order, and the Phase 9 runbook — is tracked in ONE place:
+> **`credence/docs/22-remaining-work.md`** (Part II, Tiers 2 and 4/6). Landed
+> so far: **H12** (`60ce2c4`), **H13 + P5** (`96865e7`), **H14** (`6f776fe`),
+> **H15** (`9cffbba`), **H9 Gate-half + LD2 backstop** (`fb3bc2a`). Read this
+> file for the *why and how* of an item; read docs/22 for whether it is done
+> and what order to do it in.
+
 How this was produced: a full read of `docs/DESIGN.md`, the ADRs, and every module
 on the rule-gen spine (`router` → `classify` → `novelty` → `equiv` → `implement` →
 `gate`), the credence-side oracles they shell into (`mix credence.covers`,
