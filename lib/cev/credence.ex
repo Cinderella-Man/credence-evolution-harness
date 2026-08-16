@@ -60,6 +60,44 @@ defmodule Cev.Credence do
     if verdict_line(out, ~r/^(COVERED|NOVEL)$/) == "COVERED", do: :covered, else: :novel
   end
 
+  @doc """
+  `mix credence.fires <rule>` on a snippet → `:fires | :inert | :unknown`.
+
+  Asks whether ONE NAMED rule engages, which is the question a `BUGFIX_RULE`
+  report's repro has to answer and `covers?/2` deliberately cannot: that one
+  asks whether *any* rule engaged and names none, because it serves novelty.
+  Every trace outcome counts as engagement here — `:no_op`, `:reverted`,
+  `:patch_rejected`, `:crashed` — since a rule that matches and then misbehaves
+  is precisely what a bugfix report is usually about.
+
+  `:unknown` means the question could not be asked (no such rule, the pipeline
+  raised, the shell-out failed). **Callers must treat it as a pass.** A gate
+  that renders "we could not tell" as "refuted" rejects correct rows for its own
+  limitations — the inversion `Cev.Premise` documents at length.
+  """
+  @spec fires?(String.t(), String.t(), String.t()) :: :fires | :inert | :unknown
+  def fires?(rule_name, snippet, clone \\ Config.credence_clone()) do
+    path = Path.join(System.tmp_dir!(), "fires_#{System.unique_integer([:positive])}.exs")
+    File.write!(path, snippet)
+
+    try do
+      {out, _code} =
+        System.cmd("mix", ["credence.fires", rule_name, path], cd: clone, stderr_to_stdout: true)
+
+      case verdict_line(out, ~r/^(FIRES|INERT|UNKNOWN)$/) do
+        "FIRES" -> :fires
+        "INERT" -> :inert
+        _ -> :unknown
+      end
+    rescue
+      _ -> :unknown
+    catch
+      _, _ -> :unknown
+    after
+      File.rm(path)
+    end
+  end
+
   # ── equiv (behavioural-equivalence trichotomy, 07 §3.11) ────────────────
 
   @doc """

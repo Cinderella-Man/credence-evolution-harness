@@ -70,7 +70,11 @@ defmodule Cev.Classify do
       offered: Prompt.offered_decisions(closed),
       closed: closed,
       assumption_names: Enum.map(assumptions, & &1.name),
-      clone: clone
+      clone: clone,
+      # T4.2d's probe, injectable so the gate is provable without a built clone
+      # — the same reason `DispatchContention` takes its rule list as an
+      # argument. A gate nobody can drive is a gate nobody has seen red.
+      fires: Keyword.get(opts, :fires, &Credence.fires?/3)
     }
 
     rule_index = Keyword.get_lazy(opts, :rule_index, fn -> safe_rule_index(clone) end)
@@ -137,7 +141,12 @@ defmodule Cev.Classify do
 
   # ── Validation gates ─────────────────────────────────────────────────────
 
-  defp validate(%Spec{decision: d} = spec, ctx) do
+  @doc false
+  # Test seam. The validation gates are the part worth driving directly — each
+  # one exists because a row got through without it — and `run/2` cannot be used
+  # for that without an LLM call.
+  @spec validate(Spec.t(), map()) :: :ok | {:error, term()}
+  def validate(%Spec{decision: d} = spec, ctx) do
     with :ok <- check_offered(d, ctx) do
       check_decision(spec, ctx)
     end
@@ -165,6 +174,18 @@ defmodule Cev.Classify do
 
       match?({:error, _}, RulePaths.resolve(name, ctx.clone)) ->
         {:error, {:rule_name_unresolvable, name}}
+
+      # T4.2d. The repro must actually make the accused rule fire. A BUGFIX
+      # report names one rule and one snippet; if that rule does not engage with
+      # that snippet, the report is not about it, and the row otherwise costs a
+      # full implementer run to find that out. Ledger rows 40, 50 and 59 were
+      # live over-fires the harness talked itself out of exactly here.
+      #
+      # Only `:inert` fails. `:unknown` — no such rule, the pipeline raised, the
+      # shell-out died — passes, because a gate must never render "could not
+      # tell" as "refuted" (see `Cev.Premise`).
+      bugfix_repro_inert?(s, ctx) ->
+        {:error, {:bugfix_repro_does_not_fire, name}}
 
       true ->
         :ok
@@ -194,6 +215,26 @@ defmodule Cev.Classify do
       true -> :ok
     end
   end
+
+  # T4.2d's probe. Guarded so it only ever costs a shell-out when there is
+  # something to probe: no rule name or no BEFORE means the earlier gates
+  # already have their own answer.
+  # `rule_name` is a module ATOM (Spec §4.1), and `credence.fires` takes it on a
+  # command line, so it is stringified here rather than at the call site.
+  defp bugfix_repro_inert?(%Spec{rule_name: name, before: before}, ctx)
+       when not is_nil(name) and is_binary(before) do
+    fires = Map.get(ctx, :fires, &Credence.fires?/3)
+
+    String.trim(before) != "" and
+      fires.(rule_arg(name), before, Map.get(ctx, :clone)) == :inert
+  end
+
+  defp bugfix_repro_inert?(_spec, _ctx), do: false
+
+  defp rule_arg(name) when is_atom(name),
+    do: name |> Atom.to_string() |> String.replace_prefix("Elixir.", "")
+
+  defp rule_arg(name) when is_binary(name), do: name
 
   defp require_phase(p) when p in [:pattern, :syntax, :semantic], do: :ok
   defp require_phase(p), do: {:error, {:bad_phase, p}}

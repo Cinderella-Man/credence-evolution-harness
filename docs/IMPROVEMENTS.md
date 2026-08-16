@@ -35,11 +35,26 @@ covers the linter side; items that span both are cross-referenced as `C#`.
 > H-items with their docs/14 and escalation-ledger corrections, the LD-items,
 > the BUGFIX-lane evidence gates, the STATUS.md interlock, the salvage
 > integration order, and the Phase 9 runbook — is tracked in ONE place:
-> **`credence/docs/22-remaining-work.md`** (Part II, Tiers 2 and 4/6). Landed
-> so far: **H12** (`60ce2c4`), **H13 + P5** (`96865e7`), **H14** (`6f776fe`),
-> **H15** (`9cffbba`), **H9 Gate-half + LD2 backstop** (`fb3bc2a`). Read this
-> file for the *why and how* of an item; read docs/22 for whether it is done
-> and what order to do it in.
+> **`credence/docs/22-remaining-work.md`** (Part II, Tiers 2 and 4/6), and the
+> ordered release map is **`credence/STATUS.md`**. Read this file for the *why
+> and how* of an item; read those for whether it is done and in what order.
+>
+> **Landed so far** (refreshed 2026-08-16 — this list had gone eleven commits
+> stale, which is the hazard of keeping any status in a file that disclaims
+> keeping status):
+> **H5** = T4.6 (`7922767`) · **H8** = T2.2 (`be31904`) · **H9** both halves
+> (`fb3bc2a` Gate + `98bcddf` implementer) · **H12** (`60ce2c4`) ·
+> **H13 + P5** (`96865e7`) · **H14** (`6f776fe`) · **H15** (`9cffbba`) ·
+> **LD1 residuals** = T4.3 (`5aadc9d` · `2bb104d` · `bc94f07` · `5669a9a`) ·
+> **LD2 backstop** (`fb3bc2a`) · **Gate corpus dispatch** = T2.1 (`11a3d0e`) ·
+> **AppliedRules vocabulary** = T3.2 harness half (`7b6e2c6`) ·
+> **STATUS.md interlock** = T4.1 (`24f2dee`) · **seed teaching gaps** = T4.4
+> (`993c367`) · **BUGFIX evidence gates (a)(b)(e)** = T4.2 (`c07fb57`,
+> `1f62e16`).
+>
+> **Still open:** T4.2 (c) and (d) — the minimum in-loop gates owed before a
+> Phase-9 run — plus T2.3 (LD3+LD4), H19/T4.7, H6/T4.8, H1+H2/T4.9, and
+> T4.10's eight (H3, H4, H7, H10, H11, H16, H17, H18).
 
 How this was produced: a full read of `docs/DESIGN.md`, the ADRs, and every module
 on the rule-gen spine (`router` → `classify` → `novelty` → `equiv` → `implement` →

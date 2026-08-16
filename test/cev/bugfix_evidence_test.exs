@@ -122,4 +122,105 @@ defmodule Cev.BugfixEvidenceTest do
       refute reason == :bugfix_before_equals_after
     end
   end
+
+  # ────────────────────────────────────────────────────────────────────────
+  # T4.2d — the repro must actually make the accused rule fire.
+  #
+  # A BUGFIX report names one rule and one snippet. If the rule does not engage
+  # with the snippet, the report is not about that rule, and without this gate
+  # the row costs a full implementer run to find out. Ledger rows 40, 50 and 59
+  # were live over-fires the harness talked itself out of exactly here.
+  #
+  # The probe is injected rather than shelled, so every branch is drivable
+  # without a built clone — a gate nobody can drive is a gate nobody has seen
+  # red.
+  # ────────────────────────────────────────────────────────────────────────
+
+  describe "T4.2d — repro validation against the accused rule" do
+    alias Cev.Classify.Spec
+
+    # A one-file clone, so the resolvability gate ahead of ours is satisfied by
+    # something real rather than stubbed past.
+    setup do
+      clone = Path.join(System.tmp_dir!(), "fires_clone_#{System.unique_integer([:positive])}")
+      File.mkdir_p!(Path.join(clone, "lib/pattern"))
+
+      File.write!(
+        Path.join(clone, "lib/pattern/no_manual_max.ex"),
+        "defmodule Credence.Pattern.NoManualMax do\nend\n"
+      )
+
+      on_exit(fn -> File.rm_rf(clone) end)
+      %{clone: clone}
+    end
+
+    defp ctx(fires_verdict, clone) do
+      %{
+        offered: ["BUGFIX_RULE"],
+        closed: [Credence.Pattern.NoManualMax],
+        assumption_names: [],
+        clone: clone,
+        fires: fn _rule, _src, _clone -> fires_verdict end
+      }
+    end
+
+    defp bugfix(before) do
+      %Spec{
+        decision: :bugfix_rule,
+        rule_name: Credence.Pattern.NoManualMax,
+        before: before,
+        after: "defmodule M do\n  def f(l), do: Enum.max(l)\nend\n",
+        rationale: "over-fires"
+      }
+    end
+
+    test "an INERT repro fails the row", %{clone: clone} do
+      assert {:error, {:bugfix_repro_does_not_fire, Credence.Pattern.NoManualMax}} =
+               Cev.Classify.validate(
+                 bugfix("defmodule M do\n  def f, do: :ok\nend\n"),
+                 ctx(:inert, clone)
+               )
+    end
+
+    test "a FIRES repro passes", %{clone: clone} do
+      assert :ok =
+               Cev.Classify.validate(
+                 bugfix("defmodule M do\n  def f, do: :ok\nend\n"),
+                 ctx(:fires, clone)
+               )
+    end
+
+    # The inversion this gate must not commit. `:unknown` means the question
+    # could not be asked — no such rule, the pipeline raised, the shell-out
+    # died. Failing on it would reject correct rows for the checker's own
+    # limitations, which is the bug `Cev.Premise` is written around.
+    test "CONTROL: :unknown passes — we could not tell is never refuted", %{clone: clone} do
+      assert :ok =
+               Cev.Classify.validate(
+                 bugfix("defmodule M do\n  def f, do: :ok\nend\n"),
+                 ctx(:unknown, clone)
+               )
+    end
+
+    # Without this, every row whose BEFORE the model left out would shell out
+    # and then fail on a snippet that was never offered as evidence.
+    test "CONTROL: no BEFORE is not this gate's business", %{clone: clone} do
+      spec = %{bugfix(nil) | before: nil}
+      assert :ok = Cev.Classify.validate(spec, ctx(:inert, clone))
+    end
+
+    test "CONTROL: a blank BEFORE likewise", %{clone: clone} do
+      assert :ok = Cev.Classify.validate(bugfix("   \n  "), ctx(:inert, clone))
+    end
+
+    # Ordering control: the earlier gates must still own their errors, so a row
+    # that is wrong for two reasons reports the cheaper one.
+    test "CONTROL: before == after still reports T4.2a, not this gate", %{clone: clone} do
+      same = "defmodule M do\n  def f, do: :ok\nend\n"
+      spec = %{bugfix(same) | after: same}
+
+      assert {:error, :bugfix_before_equals_after} =
+               Cev.Classify.validate(spec, ctx(:inert, clone))
+    end
+  end
 end
