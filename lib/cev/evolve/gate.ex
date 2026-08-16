@@ -299,9 +299,30 @@ defmodule Cev.Evolve.Gate do
       {:did_not_run, out} ->
         {:reject, environmental(clone, :non_corpus, out)}
 
-      {:red, _out} ->
-        Logger.info("[Gate] corpus-free suite RED — rejecting before the corpus scan")
-        {:reject, :full_suite_red}
+      {:red, out} ->
+        # H19 (docs/22 T4.7): a red suite is not automatically a verdict on the
+        # candidate. Re-run the failing FILES once; if they pass on the re-run
+        # and none of them is in the staged diff, the failure was a flake in
+        # code this candidate never touched, and rejecting would discard a good
+        # rule for someone else's non-determinism. Anything else is a reject.
+        case flake_triage(clone, out, entries) do
+          {:flaky, files} ->
+            Logger.warning(
+              "[Gate] corpus-free suite RED, but #{length(files)} failing file(s) passed on " <>
+                "re-run and are outside the staged diff — recording as flaky and PROCEEDING: " <>
+                Enum.join(files, ", ")
+            )
+
+            record_flakes(clone, files)
+            check_corpus(clone, entries)
+
+          {:real, reason} ->
+            Logger.info(
+              "[Gate] corpus-free suite RED (#{reason}) — rejecting before the corpus scan"
+            )
+
+            {:reject, :full_suite_red}
+        end
 
       {:green, _out} ->
         check_corpus(clone, entries)
@@ -439,6 +460,74 @@ defmodule Cev.Evolve.Gate do
 
         {:did_not_run, out}
     end
+  end
+
+  # ── H19 flake triage ────────────────────────────────────────────────
+  #
+  # Deliberately conservative in one direction: a failing file that IS staged is
+  # never called a flake, however cleanly it passes on the re-run, because the
+  # candidate touched it and a test that fails only in a full-suite run is
+  # exactly the interference a new rule can cause. The re-run is therefore
+  # necessary but not sufficient — both halves have to hold.
+  #
+  # `:real` carries WHY, because "we re-ran and it still failed" and "we could
+  # not tell which files failed" are different situations and only the first is
+  # evidence about the candidate.
+  defp flake_triage(clone, out, entries) do
+    case failing_files(out) do
+      [] ->
+        {:real, "no failing file could be parsed from the output"}
+
+      files ->
+        staged = staged_paths(entries)
+
+        case Enum.filter(files, &(&1 in staged)) do
+          [_ | _] = touched ->
+            {:real, "failing file(s) are in the staged diff: #{Enum.join(touched, ", ")}"}
+
+          [] ->
+            case run_tests_traced(clone, files, phase_args(:non_corpus)) do
+              {0, _} -> {:flaky, files}
+              _ -> {:real, "the same file(s) failed again on re-run"}
+            end
+        end
+    end
+  end
+
+  # ExUnit prints each failure's location on its own line, indented, as
+  # `test/path/file_test.exs:LINE`. Take the distinct files.
+  @failure_location ~r/^\s+(test\/\S+?\.exs):\d+$/m
+
+  @doc false
+  @spec failing_files(String.t()) :: [String.t()]
+  def failing_files(out) do
+    @failure_location
+    |> Regex.scan(out, capture: :all_but_first)
+    |> Enum.map(&hd/1)
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  defp staged_paths(entries), do: entries |> Enum.flat_map(& &1.paths) |> MapSet.new()
+
+  # Appended, never rewritten: a flake that recurs is the signal, and a file
+  # that only ever holds the latest one cannot show that.
+  defp record_flakes(clone, files) do
+    path = Config.run_path("flaky.jsonl")
+    File.mkdir_p!(Path.dirname(path))
+
+    line =
+      Jason.encode!(%{
+        clone: clone,
+        files: files,
+        at: DateTime.utc_now() |> DateTime.to_iso8601()
+      })
+
+    File.write!(path, line <> "\n", [:append])
+  rescue
+    # Recording a flake must never be able to fail a Gate run that has already
+    # decided the candidate is fine.
+    e -> Logger.warning("[Gate] could not record flake: #{inspect(e)}")
   end
 
   defp attempt(clone, phase) do

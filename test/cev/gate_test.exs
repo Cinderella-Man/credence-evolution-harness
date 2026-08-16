@@ -168,12 +168,22 @@ defmodule Cev.Evolve.GateTest do
       File.write!(calls, "")
       write_stub_mix(Path.join(bin, "mix"))
 
+      # Keep the flake ledger out of the real repo: H19 appends to
+      # `Config.run_path("flaky.jsonl")`, and a test that writes into var/run of
+      # the checkout it is running in is not hermetic.
+      prev_run_dir = Application.get_env(:cev, :run_dir)
+      Application.put_env(:cev, :run_dir, Path.join(root, "var/run"))
+
       prev_path = System.get_env("PATH")
       System.put_env("PATH", bin <> ":" <> prev_path)
       System.put_env("GATE_STUB_CALLS", calls)
       System.put_env("GATE_STUB_CRASH", @row_2_crash)
 
       on_exit(fn ->
+        if prev_run_dir,
+          do: Application.put_env(:cev, :run_dir, prev_run_dir),
+          else: Application.delete_env(:cev, :run_dir)
+
         System.put_env("PATH", prev_path)
         Enum.each(~w(GATE_STUB_CALLS GATE_STUB_CRASH GATE_STUB_MODE), &System.delete_env/1)
         File.rm_rf!(root)
@@ -232,6 +242,71 @@ defmodule Cev.Evolve.GateTest do
       refute log =~ "suite NEVER RAN"
       assert calls(ctx) == ["test test/new_rule_test.exs", "test --exclude corpus"]
       assert clean?(ctx.clone)
+    end
+
+    # ── H19 / T4.7: a red suite is not automatically a verdict ──────────
+    #
+    # Live evidence for why: this harness's own suite went 325/326 then 326/326
+    # in one session, with nothing changed between the runs.
+
+    test "a red whose failing file is OUTSIDE the staged diff and passes on re-run PROCEEDS",
+         ctx do
+      System.put_env("GATE_STUB_MODE", "red_unstaged")
+
+      log = capture_log(fn -> assert {:ok, _summary} = Gate.check(ctx.clone) end)
+
+      assert log =~ "recording as flaky and PROCEEDING"
+      assert log =~ "test/base_test.exs"
+      refute log =~ "REJECT: :full_suite_red"
+
+      # It re-ran only the failing file, then went on to the corpus phase.
+      assert calls(ctx) == [
+               "test test/new_rule_test.exs",
+               "test --exclude corpus",
+               "test --exclude corpus test/base_test.exs",
+               "test --only corpus"
+             ]
+    end
+
+    # The control that keeps the triage honest. The candidate TOUCHED this file,
+    # so however cleanly it passes alone, a failure in the full suite is exactly
+    # the interference a new rule causes — never a flake.
+    test "CONTROL: a red whose failing file IS staged rejects, even though the re-run passes",
+         ctx do
+      System.put_env("GATE_STUB_MODE", "red_staged")
+
+      log = capture_log(fn -> assert {:reject, :full_suite_red} = Gate.check(ctx.clone) end)
+
+      assert log =~ "in the staged diff"
+      refute log =~ "PROCEEDING"
+
+      # And it does NOT pay for a re-run it already knows the answer to.
+      assert calls(ctx) == [
+               "test test/new_rule_test.exs",
+               "test --exclude corpus"
+             ]
+    end
+
+    test "CONTROL: a red that reproduces on re-run rejects", ctx do
+      System.put_env("GATE_STUB_MODE", "red_persistent")
+
+      log = capture_log(fn -> assert {:reject, :full_suite_red} = Gate.check(ctx.clone) end)
+
+      assert log =~ "failed again on re-run"
+      refute log =~ "PROCEEDING"
+    end
+
+    test "CONTROL: a red with no parseable failure location rejects without re-running", ctx do
+      System.put_env("GATE_STUB_MODE", "red")
+
+      log = capture_log(fn -> assert {:reject, :full_suite_red} = Gate.check(ctx.clone) end)
+
+      assert log =~ "no failing file could be parsed"
+
+      assert calls(ctx) == [
+               "test test/new_rule_test.exs",
+               "test --exclude corpus"
+             ]
     end
 
     test "a crash in the CORPUS phase is environmental too, and names that phase", ctx do
@@ -313,8 +388,22 @@ defmodule Cev.Evolve.GateTest do
           flaky) if [ "$n" -ge 2 ]; then summary "7333 tests, 0 failures"; exit 0; fi
                  printf '%s' "$GATE_STUB_CRASH"; exit 1 ;;
           red)   summary "7333 tests, 1 failure"; exit 2 ;;
+          red_unstaged) printf '\n  1) test something (BaseTest)\n     test/base_test.exs:12\n'
+                 summary "7333 tests, 1 failure"; exit 2 ;;
+          red_staged) printf '\n  1) test something (NewRuleTest)\n     test/new_rule_test.exs:3\n'
+                 summary "7333 tests, 1 failure"; exit 2 ;;
+          red_persistent) printf '\n  1) test something (BaseTest)\n     test/base_test.exs:12\n'
+                 summary "7333 tests, 1 failure"; exit 2 ;;
           *)     summary "7333 tests, 0 failures"; exit 0 ;;
         esac ;;
+      "test --exclude corpus test/base_test.exs")
+        case "$GATE_STUB_MODE" in
+          red_persistent) printf '\n  1) test something (BaseTest)\n     test/base_test.exs:12\n'
+                 summary "1 test, 1 failure"; exit 2 ;;
+          *)     summary "1 test, 0 failures"; exit 0 ;;
+        esac ;;
+      "test --exclude corpus test/new_rule_test.exs")
+        summary "1 test, 0 failures"; exit 0 ;;
       "test --only corpus")
         case "$GATE_STUB_MODE" in
           corpus_crash) printf '%s' "$GATE_STUB_CRASH"; exit 1 ;;
@@ -328,5 +417,52 @@ defmodule Cev.Evolve.GateTest do
     """)
 
     File.chmod!(path, 0o755)
+  end
+
+  # The parser decides whether the triage runs at all: no parseable location
+  # means a straight reject, so a false NEGATIVE here silently disables H19 and
+  # a false POSITIVE re-runs the wrong files and calls a real failure flaky.
+  describe "failing_files/1" do
+    test "takes the distinct test files out of an ExUnit failure block" do
+      out = """
+        1) test a thing (FooTest)
+           test/foo_test.exs:12
+           Assertion with == failed
+
+        2) test another (FooTest)
+           test/foo_test.exs:40
+
+        3) test elsewhere (BarTest)
+           test/nested/bar_test.exs:7
+
+      Finished in 1.0 seconds
+      7333 tests, 3 failures
+      """
+
+      assert Gate.failing_files(out) == ["test/foo_test.exs", "test/nested/bar_test.exs"]
+    end
+
+    test "a green run yields nothing" do
+      assert Gate.failing_files("Finished in 1.0 seconds\n7333 tests, 0 failures\n") == []
+    end
+
+    # Controls against the two ways this can be wrong. A `.ex` path is not a
+    # test file, and a lib path mentioned in a stacktrace is not a failure
+    # location — matching either would re-run files ExUnit cannot take.
+    test "CONTROL: does not take lib paths or stacktrace lines" do
+      out = """
+        1) test a thing (FooTest)
+           test/foo_test.exs:12
+           stacktrace:
+             (credence 0.8.1) lib/pattern/some_rule.ex:88: SomeRule.check/2
+             test/support/rule_case.ex:31: Credence.RuleCase.fix/2
+      """
+
+      assert Gate.failing_files(out) == ["test/foo_test.exs"]
+    end
+
+    test "CONTROL: an unindented mention is not a failure location" do
+      assert Gate.failing_files("test/foo_test.exs:12\n") == []
+    end
   end
 end
