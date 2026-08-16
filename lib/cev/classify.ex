@@ -56,10 +56,25 @@ defmodule Cev.Classify do
   def run(log, solve_outcome, opts \\ []) when solve_outcome in [:solved, :failed] do
     distilled = Distill.distill(log)
 
-    closed =
-      Keyword.get_lazy(opts, :closed_set, fn ->
-        log |> AppliedRules.parse() |> AppliedRules.modules()
-      end)
+    entries = Keyword.get_lazy(opts, :entries, fn -> AppliedRules.parse(log) end)
+
+    closed = Keyword.get_lazy(opts, :closed_set, fn -> AppliedRules.modules(entries) end)
+
+    # The same closed set, annotated with what credence actually DID with each
+    # rule this row. Validation still runs against the plain module list — a
+    # `:crashed` rule is no more nameable than a `:fired` one — but the
+    # classifier now sees the difference between "this rule ran" and "this rule
+    # raised", which is the single strongest piece of bug evidence in the row and
+    # was previously buried in the log dump.
+    #
+    # Derived from `closed` when it was passed explicitly, so a caller
+    # overriding the closed set still gets a prompt that matches it.
+    closed_detail =
+      if Keyword.has_key?(opts, :closed_set) do
+        closed
+      else
+        AppliedRules.outcomes(entries)
+      end
 
     assumptions = Keyword.get_lazy(opts, :assumptions, fn -> Credence.assumptions() end)
     ledger = Keyword.get_lazy(opts, :ledger, fn -> Ledger.read() end)
@@ -82,7 +97,7 @@ defmodule Cev.Classify do
     user =
       Prompt.build(
         distilled_log: distilled,
-        closed_set: closed,
+        closed_set: closed_detail,
         ledger: ledger,
         assumptions: assumptions,
         solve_outcome: solve_outcome,

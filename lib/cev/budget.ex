@@ -79,7 +79,7 @@ defmodule Cev.Budget do
       # rather than per-run. A crash-restart loop — which is exactly the shape
       # of the failure it exists to stop — could never trip it, because every
       # restart forgot everything the previous one spent.
-      spent_usd: Keyword.get(opts, :spent_usd) || spent_so_far(usage_log),
+      spent_usd: Keyword.get(opts, :spent_usd) || resume_spend(usage_log),
       sessions_without_usage: 0,
       consecutive_429: 0,
       current_row: nil,
@@ -96,6 +96,15 @@ defmodule Cev.Budget do
     }
 
     {:ok, state}
+  end
+
+  # Seeding is skipped when `:budget_resume` is false. The test env sets it so,
+  # and the reason is a hazard this very change introduced: `tmp/test_run/usage.jsonl`
+  # accumulates across `mix test` invocations, so a booted Budget would seed from
+  # thousands of dollars of synthetic records and the next real `record/4` would
+  # trip the runaway ceiling and call `Cev.shutdown/1` in the middle of the suite.
+  defp resume_spend(usage_log) do
+    if Application.get_env(:cev, :budget_resume, true), do: spent_so_far(usage_log), else: 0.0
   end
 
   # Sum `cost_usd` over the run's existing usage log. Unreadable or malformed

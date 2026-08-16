@@ -101,6 +101,43 @@ defmodule Cev.AppliedRules do
     entries |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
   end
 
+  @doc """
+  Unique fired modules, each with the outcomes it produced this row.
+
+  `parse/1` deliberately accepts any outcome atom so this side "never again
+  loses an outcome it has not heard of" — and then `modules/1` dropped every one
+  of them three lines later, since the closed set is the only thing that reaches
+  the classifier. The outcomes were visible to it only incidentally, as raw text
+  inside a 40K-token log dump.
+
+  That matters because the non-integer outcomes are the strongest bug evidence
+  credence produces. `:crashed` is a rule that raised. `:patch_rejected` is a
+  rule whose patches were built and then discarded by the safety invariants.
+  `:no_op` is a rule that reported a finding and then changed nothing — the
+  mechanical form of the classifier's most common and usually-wrong BUGFIX
+  trigger. All three say "this specific rule misbehaved here" far more precisely
+  than a hand-reduced repro does.
+
+  Counts collapse to `:fired`: a rule that reported 3 issues and a rule that
+  reported 1 are the same fact for this purpose, and printing the number invites
+  the classifier to read significance into it.
+
+  This changes what the classifier SEES, not what the router DOES. Routing on
+  these atoms is a separate decision — see `reverted/1`.
+  """
+  @spec outcomes([entry()]) :: [{module(), [atom()]}]
+  def outcomes(entries) do
+    entries
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+    |> Enum.map(fn {mod, counts} ->
+      {mod, counts |> Enum.map(&normalize_outcome/1) |> Enum.uniq() |> Enum.sort()}
+    end)
+    |> Enum.sort_by(&elem(&1, 0))
+  end
+
+  defp normalize_outcome(count) when is_integer(count), do: :fired
+  defp normalize_outcome(atom) when is_atom(atom), do: atom
+
   defp parse_line(line) do
     case Regex.named_captures(@line, line) do
       %{"body" => body} ->

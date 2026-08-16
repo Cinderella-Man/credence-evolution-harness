@@ -19,10 +19,21 @@ defmodule Cev.BudgetResumeTest do
     File.mkdir_p!(tmp)
     Application.put_env(:cev, :run_dir, tmp)
 
+    # The test env disables resume globally (see config/config.exs — the shared
+    # `tmp/test_run/usage.jsonl` would otherwise seed every booted Budget with
+    # accumulated synthetic spend). These tests are ABOUT resume, so they turn it
+    # back on for their own isolated run dir.
+    prev_resume = Application.get_env(:cev, :budget_resume)
+    Application.put_env(:cev, :budget_resume, true)
+
     on_exit(fn ->
       if prev,
         do: Application.put_env(:cev, :run_dir, prev),
         else: Application.delete_env(:cev, :run_dir)
+
+      if is_nil(prev_resume),
+        do: Application.delete_env(:cev, :budget_resume),
+        else: Application.put_env(:cev, :budget_resume, prev_resume)
 
       File.rm_rf!(tmp)
     end)

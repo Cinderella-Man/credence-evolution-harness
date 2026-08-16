@@ -471,6 +471,8 @@ defmodule Cev.Classify.Prompt do
 
     ## Rules that already fired on this row (the BUGFIX closed set)
     #{closed_set_block(closed)}
+
+    #{outcome_legend()}
     These rules ALREADY engaged on this row — Credence handled what they target.
     Do NOT propose a POTENTIAL_NEW_RULE for an idiom one of them already fixes;
     that is already covered. If such a rule MIS-fired — it engaged and did the
@@ -583,6 +585,27 @@ defmodule Cev.Classify.Prompt do
   def offered_decisions(_closed),
     do: ["BUGFIX_RULE", "POTENTIAL_NEW_RULE", "SWITCH_PROPOSAL", "NO_ACTION"]
 
+  @doc """
+  How to read the outcome annotations in the closed set. Rendered into the
+  prompt so the classifier is told what they mean rather than left to guess.
+  """
+  def outcome_legend do
+    """
+    An entry may carry what credence DID with that rule on this row:
+      [crashed]         the rule raised; the round caught it and skipped it
+      [patch_rejected]  it produced patches that the safety invariants then
+                        discarded (output did not parse, or comments moved)
+      [reverted]        its output added a compile error the input did not have
+      [no_op]           it REPORTED a finding and then changed nothing
+    An entry with no annotation simply fired and was applied normally.
+
+    These are mechanical evidence that the named rule misbehaved HERE. A rule
+    carrying one of them is a far better BUGFIX candidate than one you inferred
+    from reading the log, and `no_op` in particular is the machine-checked form
+    of "it flagged something it could not fix".
+    """
+  end
+
   # ── Sections ───────────────────────────────────────────────────────────
 
   defp lens(:solved) do
@@ -616,10 +639,34 @@ defmodule Cev.Classify.Prompt do
 
   defp closed_set_block([]), do: "(none fired — BUGFIX is not possible this row)"
 
+  # Each entry may carry the outcomes credence recorded for it this row
+  # (`Cev.AppliedRules.outcomes/1`). A bare module still renders, so a caller
+  # passing the plain closed set — every existing one — is unaffected.
+  #
+  # The annotation is the point: `:crashed` means the rule raised,
+  # `:patch_rejected` means its patches were built and then discarded by the
+  # safety invariants, and `:no_op` means it reported a finding and changed
+  # nothing. Each is direct evidence that THAT rule misbehaved on THIS row,
+  # which is exactly what a BUGFIX decision needs and what the classifier
+  # previously had to infer from a 40K-token log.
   defp closed_set_block(modules) do
-    Enum.map_join(modules, "\n", fn m ->
-      "  - " <> (m |> Atom.to_string() |> String.replace_prefix("Elixir.", ""))
+    Enum.map_join(modules, "\n", fn
+      {m, outcomes} when is_list(outcomes) ->
+        "  - " <> short_module(m) <> outcome_suffix(outcomes)
+
+      m ->
+        "  - " <> short_module(m)
     end)
+  end
+
+  defp short_module(m), do: m |> Atom.to_string() |> String.replace_prefix("Elixir.", "")
+
+  # `:fired` alone is the ordinary case and says nothing worth saying.
+  defp outcome_suffix(outcomes) do
+    case Enum.reject(outcomes, &(&1 == :fired)) do
+      [] -> ""
+      notable -> "  [#{Enum.map_join(notable, ", ", &to_string/1)}]"
+    end
   end
 
   defp ledger_block(ledger) do

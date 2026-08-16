@@ -269,6 +269,14 @@ config :logger,
 # the ones that do not.
 if config_env() == :test do
   config :cev, run_dir: "tmp/test_run"
+
+  # `Budget.init/1` seeds `spent_usd` from the run's usage log so the runaway
+  # ceiling survives a restart. Under `:test` that log accumulates across every
+  # `mix test` invocation, so a booted Budget would seed from thousands of
+  # dollars of synthetic records and the next real `record/4` would trip the
+  # ceiling and call `Cev.shutdown/1` mid-suite. `budget_resume_test.exs` drives
+  # the resume path explicitly instead.
+  config :cev, budget_resume: false
 end
 
 if File.exists?("config/secrets.exs") do

@@ -164,4 +164,101 @@ defmodule Cev.LogPlumbingTest do
                RulePaths.resolve(:"Elixir.Credence.Pattern.Ghost", clone)
     end
   end
+
+  # ── The outcome annotations reach the classifier ───────────────────────
+  #
+  # `parse/1` was written so this side "never again loses an outcome it has not
+  # heard of" — and then `modules/1` dropped every outcome three lines later,
+  # because the closed set is the only thing that reaches the classifier. The
+  # atoms were visible to it only incidentally, as raw text inside a 40K-token
+  # log dump.
+  #
+  # Across all 489 archived row logs of the 3rd evolution there are 2,472
+  # APPLIED_RULES entries and every one is an integer, so even `:reverted` has
+  # never fired in a real run. `:patch_rejected`, `:crashed` and `:no_op` all
+  # landed in credence after that run finished — Phase 9 is the first time the
+  # harness will ever see them, which is exactly why this needs a test now
+  # rather than a post-mortem later.
+  describe "AppliedRules.outcomes/1" do
+    @log """
+    APPLIED_RULES: [{Credence.Pattern.A, 3}, {Credence.Pattern.B, :no_op}, {Credence.Pattern.A, 1}, {Credence.Semantic.C, :crashed}]
+    """
+
+    test "groups a module's outcomes and collapses counts to :fired" do
+      assert Cev.AppliedRules.outcomes(Cev.AppliedRules.parse(@log)) == [
+               {Credence.Pattern.A, [:fired]},
+               {Credence.Pattern.B, [:no_op]},
+               {Credence.Semantic.C, [:crashed]}
+             ]
+    end
+
+    test "a module with both an integer and an atom keeps both facts" do
+      log = "APPLIED_RULES: [{Credence.Pattern.A, 2}, {Credence.Pattern.A, :reverted}]\n"
+
+      assert Cev.AppliedRules.outcomes(Cev.AppliedRules.parse(log)) == [
+               {Credence.Pattern.A, [:fired, :reverted]}
+             ]
+    end
+
+    test "the module list is unchanged — validation still runs against it" do
+      entries = Cev.AppliedRules.parse(@log)
+
+      assert Cev.AppliedRules.modules(entries) == [
+               Credence.Pattern.A,
+               Credence.Pattern.B,
+               Credence.Semantic.C
+             ]
+    end
+  end
+
+  describe "the prompt renders the annotations" do
+    test "a notable outcome is shown; an ordinary one is not" do
+      prompt =
+        Cev.Classify.Prompt.build(
+          distilled_log: "log",
+          closed_set: [
+            {Credence.Pattern.Plain, [:fired]},
+            {Credence.Pattern.Broken, [:crashed, :no_op]}
+          ],
+          ledger: "",
+          assumptions: [],
+          solve_outcome: :failed,
+          rule_index: ""
+        )
+
+      assert prompt =~ "Credence.Pattern.Broken  [crashed, no_op]"
+      assert prompt =~ "- Credence.Pattern.Plain\n"
+      refute prompt =~ "Credence.Pattern.Plain  ["
+    end
+
+    test "a bare module list still renders — every existing caller passes one" do
+      prompt =
+        Cev.Classify.Prompt.build(
+          distilled_log: "log",
+          closed_set: [Credence.Pattern.Plain],
+          ledger: "",
+          assumptions: [],
+          solve_outcome: :failed,
+          rule_index: ""
+        )
+
+      assert prompt =~ "- Credence.Pattern.Plain"
+    end
+
+    test "the legend explains what each annotation means" do
+      prompt =
+        Cev.Classify.Prompt.build(
+          distilled_log: "log",
+          closed_set: [{Credence.Pattern.Broken, [:no_op]}],
+          ledger: "",
+          assumptions: [],
+          solve_outcome: :failed,
+          rule_index: ""
+        )
+
+      for atom <- ~w(crashed patch_rejected reverted no_op) do
+        assert prompt =~ atom, "the legend must define [#{atom}]"
+      end
+    end
+  end
 end
