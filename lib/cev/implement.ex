@@ -93,8 +93,17 @@ defmodule Cev.Implement do
     files != %{} and Enum.all?(files, &unchanged?(clone, &1))
   end
 
+  # `rule_src`, not `rule_source`. `Router.bugfix_ctx/5` writes `rule_src` and
+  # `Implement.Seed` reads `rule_src`; this was the only `rule_source` in either
+  # `lib/` or `test/`, so the map access raised `KeyError` on EVERY bugfix row.
+  # The raise escapes into `Orchestrator.safe_rule_gen/3`'s rescue, which throws
+  # away a completed implementer session — ~25 minutes of agent work — and books
+  # the row `:raised` with a log that the crash handler then deletes.
+  #
+  # It never ran in anger: it was introduced after the 3rd evolution finished.
+  # The test below is the positive control it shipped without.
   defp wrote_nothing?(%{mode: :bugfix, bugfix: bf, clone: clone}) do
-    unchanged?(clone, {bf.rule_path, bf.rule_source}) and
+    unchanged?(clone, {bf.rule_path, bf.rule_src}) and
       Enum.all?(bf.test_files, &unchanged?(clone, &1))
   end
 

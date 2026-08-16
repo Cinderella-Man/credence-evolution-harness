@@ -34,7 +34,7 @@ defmodule Cev.RowLog do
 
   # Classifier-split outcome dirs (07 §8), all nested UNDER logs/. Nothing is
   # deleted — every outcome MOVES the log to its dir (08 T6.2/T6.5).
-  @outcome_dirs ~w(escalated committed no_action duplicate behaviour_diverged switch_proposals classifier_errors transient too_slow gate_environmental)
+  @outcome_dirs ~w(escalated committed no_action duplicate behaviour_diverged switch_proposals classifier_errors transient too_slow gate_environmental crashed)
 
   @doc "Create the run-scoped log dirs (logs/ + every outcome subfolder). Safe at boot."
   def ensure_ready do
@@ -119,6 +119,22 @@ defmodule Cev.RowLog do
     File.rm(log_path(index))
     :ok
   end
+
+  @doc """
+  Move the row log to `logs/crashed/` (the row raised and was booked `:raised`
+  or `:exception`).
+
+  Both of `Orchestrator`'s rescues used to call `close/1`, which DELETES. The
+  cost was measured on the 3rd evolution: 68 `rulegen: raised` plus 21
+  `outcome: exception` rows — 7.6% of 1,177 — and grepping all 489 archived row
+  logs for either crash marker returns nothing, because the logs were removed as
+  they were written. Those rows also carry `decision: null`, so `rows.jsonl`
+  says nothing either, which is why nobody knows what any of them were.
+
+  A crash is the outcome that most needs its log kept, and it was the only one
+  that did not keep it.
+  """
+  def crashed(index), do: move(index, outcome_path("crashed"))
 
   @doc "Move the row log to `logs/escalated/` (dead-end / phantom / Gate reject)."
   def escalate(index), do: move(index, outcome_path("escalated"))

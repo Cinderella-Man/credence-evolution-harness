@@ -16,3 +16,7 @@ cev-*.tar
 
 # Secrets (real values live here; commit secrets.dummy.exs only)
 /config/secrets.exs
+
+# Test-env run_dir (config/config.exs sets run_dir to tmp/test_run under :test
+# so `mix test` never writes into the live var/run state).
+/tmp/

@@ -326,4 +326,116 @@ defmodule Cev.ImplementTest do
       assert code != 0, "expected the generated stub tests to be RED"
     end
   end
+
+  # ── The null-run detector, on a bugfix row ─────────────────────────────
+  #
+  # `wrote_nothing?/1` exists so that an agent which made 25 read-only steps and
+  # wrote nothing is booked `no_writes` rather than `cc_tests_red` — the second
+  # is a MERIT failure and poisons decisions.md with a dead-end idea nobody
+  # actually attempted.
+  #
+  # The bugfix clause read `bf.rule_source`. `Router.bugfix_ctx/5` writes
+  # `rule_src`, and so does `Implement.Seed`; `rule_source` appeared nowhere else
+  # in lib/ or test/. So the detector raised `KeyError` on EVERY bugfix row, the
+  # raise escaped into `Orchestrator.safe_rule_gen/3`'s rescue, and a completed
+  # implementer session was thrown away with the row booked `:raised`.
+  #
+  # It never ran in anger — it landed after the 3rd evolution finished. These are
+  # the positive controls it shipped without.
+  describe "wrote_nothing?/1 on a bugfix row" do
+    setup do
+      clone = Path.join(System.tmp_dir!(), "cev_impl_#{System.unique_integer([:positive])}")
+      File.mkdir_p!(Path.join(clone, "lib"))
+      File.mkdir_p!(Path.join(clone, "test"))
+      on_exit(fn -> File.rm_rf(clone) end)
+
+      rule_path = "lib/rule.ex"
+      test_path = "test/rule_test.exs"
+      File.write!(Path.join(clone, rule_path), "ORIGINAL RULE\n")
+      File.write!(Path.join(clone, test_path), "ORIGINAL TEST\n")
+
+      # The same shape `Router.bugfix_ctx/5` builds, so this exercises the real
+      # `Seed.build/2` path rather than a convenient subset of it.
+      ctx = %{
+        mode: :bugfix,
+        phase: :pattern,
+        clone: clone,
+        minimal_set: [],
+        repair?: false,
+        spec: %{
+          before: "before",
+          after: "after",
+          rationale: "broke compilation (:reverted)",
+          assumptions: []
+        },
+        bugfix: %{
+          module: "Credence.Pattern.NoFoo",
+          rule_path: rule_path,
+          rule_src: "ORIGINAL RULE\n",
+          test_files: %{test_path => "ORIGINAL TEST\n"},
+          sub_shape: nil
+        }
+      }
+
+      %{clone: clone, ctx: ctx, rule_path: rule_path, test_path: test_path}
+    end
+
+    test "an agent that wrote nothing gives up rather than raising", %{ctx: ctx} do
+      assert {:gave_up, {:cc, "no_writes"}} =
+               Cev.Implement.run(ctx, driver: :cc, pi: fn _prompt, _opts -> {:ok, %{}} end)
+    end
+
+    test "an agent that edited the rule is NOT a null run", %{
+      ctx: ctx,
+      clone: clone,
+      rule_path: rule_path
+    } do
+      agent = fn _prompt, _opts ->
+        File.write!(Path.join(clone, rule_path), "AGENT EDITED THIS\n")
+        {:ok, %{}}
+      end
+
+      # It gets past the null-run check and on to the focused test run, which is
+      # a different outcome. Asserting "not no_writes" rather than a specific
+      # result keeps this test about the detector.
+      refute match?(
+               {:gave_up, {_tag, "no_writes"}},
+               Cev.Implement.run(ctx, driver: :cc, pi: agent)
+             )
+    end
+
+    test "an agent that edited only a test file is NOT a null run", %{
+      ctx: ctx,
+      clone: clone,
+      test_path: test_path
+    } do
+      agent = fn _prompt, _opts ->
+        File.write!(Path.join(clone, test_path), "AGENT EDITED THIS TEST\n")
+        {:ok, %{}}
+      end
+
+      refute match?(
+               {:gave_up, {_tag, "no_writes"}},
+               Cev.Implement.run(ctx, driver: :cc, pi: agent)
+             )
+    end
+
+    # A deleted file counts as CHANGED, not as a null run: the question is "did
+    # the agent do anything", not "is the tree pristine".
+    test "an agent that deleted the rule is NOT a null run", %{
+      ctx: ctx,
+      clone: clone,
+      rule_path: rule_path
+    } do
+      agent = fn _prompt, _opts ->
+        File.rm!(Path.join(clone, rule_path))
+        {:ok, %{}}
+      end
+
+      refute match?(
+               {:gave_up, {_tag, "no_writes"}},
+               Cev.Implement.run(ctx, driver: :cc, pi: agent)
+             )
+    end
+  end
 end

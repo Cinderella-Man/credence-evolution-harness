@@ -165,7 +165,7 @@ defmodule Cev.Orchestrator do
     e ->
       Logger.error("[idx=#{idx}] EXCEPTION: #{Exception.format(:error, e, __STACKTRACE__)}")
       discard_clone()
-      safe_close_log(idx)
+      safe_crash_log(idx)
       write_row_stat(state, %{index: idx, ts: System.os_time(:second), outcome: :exception})
       Progress.mark_done(state.progress_path, idx)
       :exception
@@ -254,7 +254,7 @@ defmodule Cev.Orchestrator do
     e ->
       Logger.error("[idx=#{idx}] router raised: #{Exception.message(e)} — discarding clone")
       discard_clone()
-      safe_close_log(idx)
+      safe_crash_log(idx)
       %{outcome: :raised, decision: nil}
   end
 
@@ -373,8 +373,11 @@ defmodule Cev.Orchestrator do
     System.cmd("git", ["clean", "-fd"], cd: clone, stderr_to_stdout: true)
   end
 
-  defp safe_close_log(idx) do
-    RowLog.close(idx)
+  # KEEP the log on a crash — `RowLog.close/1` deletes it, and a crash is the
+  # outcome whose evidence matters most. See `RowLog.crashed/1` for what the
+  # previous behaviour cost the 3rd evolution.
+  defp safe_crash_log(idx) do
+    RowLog.crashed(idx)
   rescue
     _ -> :ok
   end

@@ -247,6 +247,30 @@ config :logger,
   # prints about one file, not by anything unbounded.
   truncate: :infinity
 
+# ── Test isolation ──────────────────────────────────────────────────────
+#
+# Without this, `run_dir` is `var/run` in EVERY env, and `mix test` writes into
+# the live run state. That is not hypothetical — it already happened twice:
+#
+#   * 25 `sidecar_test_*.log` ExUnit fixtures sit at the top level of
+#     `var/archive/run-2026-07-06/`, the 3rd evolution's durable evidence. They
+#     are the only source of `ENVIRONMENTAL` strings in that archive, so anyone
+#     grepping it for gate behaviour gets false positives.
+#   * `var/run/usage.jsonl` carries synthetic records totalling ~$35,700 across
+#     three `mix test` runs, against a real run that cost ~$67. `mix cev.usage`
+#     reads that file directly, so its report is unusable without filtering.
+#
+# There is a live hazard too: `RowLog.open/1` swaps the GLOBAL `:row_file`
+# logger handler, so running `mix test` during a real run would hijack the live
+# row's log capture.
+#
+# Tests that need their own isolated dir still override this per-test (see
+# `router_test.exs` and `gate_test.exs`); this is the floor beneath them, for
+# the ones that do not.
+if config_env() == :test do
+  config :cev, run_dir: "tmp/test_run"
+end
+
 if File.exists?("config/secrets.exs") do
   import_config "secrets.exs"
 end
