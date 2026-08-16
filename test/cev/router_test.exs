@@ -211,6 +211,19 @@ defmodule Cev.Evolve.RouterTest do
     }
   end
 
+  # A NEW_RULE spec: only that lane builds an implementer ctx, and only a ctx
+  # can carry the repair brief a retry needs.
+  defp new_rule_spec do
+    %Spec{
+      decision: :potential_new_rule,
+      proposed_name: "no_thing",
+      phase: :pattern,
+      before: "defmodule M do\n  def f(l), do: Enum.uniq(l) |> length()\nend\n",
+      after: "defmodule M do\n  def f(l), do: l |> Enum.uniq() |> Enum.count()\nend\n",
+      rationale: "r"
+    }
+  end
+
   defp env_detail do
     %{
       phase: :non_corpus,
@@ -258,5 +271,121 @@ defmodule Cev.Evolve.RouterTest do
     assert moved?("escalated", 21)
     refute moved?("gate_environmental", 21)
     assert File.read!(Cev.Config.run_path("decisions.md")) =~ "gate_reject (:full_suite_red)"
+  end
+
+  # ── H6 / T4.8: one bounded repair round on a corpus reject ───────────
+  #
+  # An over-fire is the one reject an implementer can act on — the Gate hands
+  # back the exact findings, a far better brief than the original seed had.
+  # Everything else (suite red, mutation no-effect, scope) is a wrong idea or a
+  # wrong shape, and re-running the same seed against it spends a second budget
+  # on the same answer.
+
+  test "a corpus over-fire re-seeds the implementer ONCE, with the findings" do
+    write_log(30, "log\n")
+    detail = %{kind: :over_fire, new: ["jason/lib/codegen.ex:42  no_thing"], gone: [], patch: ""}
+    seen = :counters.new(1, [])
+    briefs = :ets.new(:briefs, [:public, :set])
+
+    gate = fn _clone ->
+      :counters.add(seen, 1, 1)
+
+      if :counters.get(seen, 1) == 1,
+        do: {:reject, {:corpus, :over_fire, detail}},
+        else: {:reject, :full_suite_red}
+    end
+
+    # The second gate call returns a DIFFERENT reject, so this isolates "the
+    # retry happened, carrying the findings" from "the commit path works".
+    assert %{outcome: {:rejected, :full_suite_red}} =
+             Router.run(30, :solved, fake_clone(),
+               classify: fn _l, _o, _opts -> {:ok, new_rule_spec()} end,
+               novelty: fn _before, _clone -> :novel end,
+               equiv: fn _spec -> {:equivalent, []} end,
+               scaffold: fn _name, phase, _clone ->
+                 {:ok,
+                  %{
+                    phase: phase,
+                    snake: "no_thing",
+                    files: [],
+                    module: "Credence.Pattern.NoThing"
+                  }}
+               end,
+               implement: fn ctx ->
+                 :ets.insert(briefs, {:ets.info(briefs, :size), ctx[:corpus_repair]})
+                 {:ok, %{}}
+               end,
+               gate: gate
+             )
+
+    # Two implementer runs, and the SECOND one carried the findings.
+    assert :ets.info(briefs, :size) == 2
+    assert [{0, nil}] = :ets.lookup(briefs, 0)
+    assert [{1, %{new: ["jason/lib/codegen.ex:42  no_thing"]}}] = :ets.lookup(briefs, 1)
+  end
+
+  # The bound, and it is the one that could hurt: the retry passes a NON-nil ctx
+  # back into the same path, so without a marker on the ctx this loops forever
+  # against a persistently over-firing candidate.
+  test "a candidate that over-fires TWICE escalates rather than looping" do
+    write_log(31, "log\n")
+    detail = %{kind: :over_fire, new: ["a.ex:1  no_thing"], gone: [], patch: ""}
+    runs = :counters.new(1, [])
+
+    assert %{outcome: {:rejected, _}} =
+             Router.run(31, :solved, fake_clone(),
+               classify: fn _l, _o, _opts -> {:ok, new_rule_spec()} end,
+               novelty: fn _before, _clone -> :novel end,
+               equiv: fn _spec -> {:equivalent, []} end,
+               scaffold: fn _name, phase, _clone ->
+                 {:ok,
+                  %{
+                    phase: phase,
+                    snake: "no_thing",
+                    files: [],
+                    module: "Credence.Pattern.NoThing"
+                  }}
+               end,
+               implement: fn _ctx ->
+                 :counters.add(runs, 1, 1)
+                 {:ok, %{}}
+               end,
+               gate: fn _clone -> {:reject, {:corpus, :over_fire, detail}} end
+             )
+
+    assert :counters.get(runs, 1) == 2,
+           "expected exactly one retry, got #{:counters.get(runs, 1)} runs"
+
+    assert moved?("escalated", 31)
+  end
+
+  # Only corpus rejects are retried. A suite-red is a wrong idea, not a wrong
+  # scope, and the implementer has nothing new to work from.
+  test "CONTROL: a non-corpus reject is not retried" do
+    write_log(32, "log\n")
+    runs = :counters.new(1, [])
+
+    assert %{outcome: {:rejected, :full_suite_red}} =
+             Router.run(32, :solved, fake_clone(),
+               classify: fn _l, _o, _opts -> {:ok, new_rule_spec()} end,
+               novelty: fn _before, _clone -> :novel end,
+               equiv: fn _spec -> {:equivalent, []} end,
+               scaffold: fn _name, phase, _clone ->
+                 {:ok,
+                  %{
+                    phase: phase,
+                    snake: "no_thing",
+                    files: [],
+                    module: "Credence.Pattern.NoThing"
+                  }}
+               end,
+               implement: fn _ctx ->
+                 :counters.add(runs, 1, 1)
+                 {:ok, %{}}
+               end,
+               gate: fn _clone -> {:reject, :full_suite_red} end
+             )
+
+    assert :counters.get(runs, 1) == 1
   end
 end

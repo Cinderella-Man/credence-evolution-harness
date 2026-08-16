@@ -174,7 +174,12 @@ defmodule Cev.Evolve.Router do
         _ -> []
       end
 
-    case Naming.resolve_and_scaffold(spec.proposed_name, spec.phase, clone) do
+    # Injectable like every other stage here (classify/novelty/equiv/implement/
+    # gate). It shells `mix credence.gen.rule` inside the clone, so without a
+    # seam the new-rule lane cannot be driven in a test at all.
+    scaffold_fn = Keyword.get(opts, :scaffold, &Naming.resolve_and_scaffold/3)
+
+    case scaffold_fn.(spec.proposed_name, spec.phase, clone) do
       {:ok, scaffold} ->
         ctx = new_ctx(spec, scaffold, minimal_set, repair?, repair_evidence, log, clone)
         build_and_gate(index, ctx, "new(#{spec.phase}): #{scaffold.snake}", clone, opts)
@@ -195,7 +200,7 @@ defmodule Cev.Evolve.Router do
 
     case implement.(ctx) do
       {:ok, _result} ->
-        gate(index, decision_text, clone, opts)
+        gate(index, decision_text, clone, opts, ctx)
 
       {:gave_up, reason} ->
         # A transient LLM timeout / fatal auth error is handled don't-consume /
@@ -305,7 +310,10 @@ defmodule Cev.Evolve.Router do
       Enum.any?(@refusal_markers, &String.contains?(down, &1))
   end
 
-  defp gate(index, decision_text, clone, opts) do
+  # `ctx` is the implementer seed that produced this candidate, carried so a
+  # corpus reject can be handed back to the implementer once (H6/T4.8). `nil`
+  # means "no retry available" — a bugfix lane, or the retry itself.
+  defp gate(index, decision_text, clone, opts, ctx) do
     check = Keyword.get(opts, :gate, &Gate.check/1)
 
     case check.(clone) do
@@ -340,6 +348,30 @@ defmodule Cev.Evolve.Router do
         RowLog.gate_environmental(index)
         outcome(:gate_environmental, decision_text)
 
+      # H6 / T4.8: ONE repair round on a corpus reject, and only a corpus one.
+      #
+      # An over-fire is the reject an implementer can actually act on — the Gate
+      # hands back the exact findings, which is a far better brief than the
+      # original seed had. Everything else (suite red, mutation no-effect, scope)
+      # is either a wrong idea or a wrong shape, and re-running the same seed
+      # against it just spends a second implementer budget on the same answer.
+      #
+      # Bounded at one: `retry_ctx/2` returns a ctx with no further retry, so a
+      # candidate that over-fires twice escalates rather than looping.
+      {:reject, {:corpus, kind, detail} = reason} ->
+        if retryable?(ctx) do
+          Logger.info(
+            "[Router] corpus #{kind} — re-seeding the implementer ONCE with the findings"
+          )
+
+          build_and_gate(index, retry_ctx(ctx, detail), decision_text, clone, opts)
+        else
+          reason = Corpus.persist_reject(index, reason)
+          Ledger.gate_reject(index, reason, decision_text)
+          RowLog.escalate(index)
+          outcome({:rejected, reason}, decision_text)
+        end
+
       {:reject, reason} ->
         # Gate already discarded the working tree. A corpus over-fire/narrowing
         # reject preserves the agent's patch + a drop-or-accept report under
@@ -349,6 +381,24 @@ defmodule Cev.Evolve.Router do
         RowLog.escalate(index)
         outcome({:rejected, reason}, decision_text)
     end
+  end
+
+  # The bound. A ctx that already carries a repair attempt is not retried again,
+  # so a candidate that over-fires twice escalates instead of looping — and a
+  # lane with no ctx (bugfix) never retries at all.
+  defp retryable?(nil), do: false
+  defp retryable?(ctx), do: not Map.get(ctx, :corpus_repair_attempted, false)
+
+  # The repair brief: the original seed plus the findings the Gate just produced,
+  # and marked so this cannot happen twice.
+  @doc false
+  def retry_ctx(ctx, detail) do
+    ctx
+    |> Map.put(:corpus_repair, %{
+      new: Map.get(detail, :new, []),
+      gone: Map.get(detail, :gone, [])
+    })
+    |> Map.put(:corpus_repair_attempted, true)
   end
 
   # ── ctx builders (the implementer seed ingredients) ─────────────────────
