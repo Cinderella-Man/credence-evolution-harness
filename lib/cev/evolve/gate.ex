@@ -254,10 +254,36 @@ defmodule Cev.Evolve.Gate do
           "[Gate] mutation OK — changed test(s) RED without the rule (exit #{exit_code})"
         )
 
-        :ok
+        check_focused_stability(clone, test_files)
       else
         {:reject, {:mutation_no_effect, test_files}}
       end
+    end
+  end
+
+  # H19's third half (docs/22 T4.7): a pre-commit stability re-run.
+  #
+  # The mutation check has just proved the candidate's tests go RED without the
+  # rule. This proves they go GREEN *twice* with it. A test that passes once and
+  # fails once is not a rule the Gate should commit — and the flake triage in
+  # `check_full_suite/2` deliberately will not forgive it later, because a
+  # failing file inside the staged diff is never called a flake.
+  #
+  # One extra run of one file, so the cost is a rounding error against the
+  # corpus phase, and it is the candidate's OWN tests — the ones most likely to
+  # be newly written and least likely to have been run twice by anyone.
+  defp check_focused_stability(clone, test_files) do
+    case {run_tests(clone, test_files), run_tests(clone, test_files)} do
+      {0, 0} ->
+        :ok
+
+      {a, b} ->
+        Logger.error(
+          "[Gate] focused stability: the candidate's own tests gave exit #{a} then #{b} " <>
+            "on identical trees — unstable, rejecting"
+        )
+
+        {:reject, {:unstable_tests, test_files}}
     end
   end
 

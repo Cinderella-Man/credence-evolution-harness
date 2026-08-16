@@ -213,6 +213,8 @@ defmodule Cev.Evolve.GateTest do
       # paid for.
       assert calls(ctx) == [
                "test test/new_rule_test.exs",
+               "test test/new_rule_test.exs",
+               "test test/new_rule_test.exs",
                "test --exclude corpus",
                "test --exclude corpus"
              ]
@@ -227,6 +229,8 @@ defmodule Cev.Evolve.GateTest do
 
       assert calls(ctx) == [
                "test test/new_rule_test.exs",
+               "test test/new_rule_test.exs",
+               "test test/new_rule_test.exs",
                "test --exclude corpus",
                "test --exclude corpus",
                "test --only corpus"
@@ -240,7 +244,15 @@ defmodule Cev.Evolve.GateTest do
 
       assert log =~ "REJECT: :full_suite_red"
       refute log =~ "suite NEVER RAN"
-      assert calls(ctx) == ["test test/new_rule_test.exs", "test --exclude corpus"]
+
+      assert calls(ctx) == [
+               # the mutation run, then H19's two stability runs
+               "test test/new_rule_test.exs",
+               "test test/new_rule_test.exs",
+               "test test/new_rule_test.exs",
+               "test --exclude corpus"
+             ]
+
       assert clean?(ctx.clone)
     end
 
@@ -248,6 +260,26 @@ defmodule Cev.Evolve.GateTest do
     #
     # Live evidence for why: this harness's own suite went 325/326 then 326/326
     # in one session, with nothing changed between the runs.
+
+    # ── H19's third half: the pre-commit stability re-run ──────────────
+    #
+    # The mutation check proves the candidate's tests go RED without the rule.
+    # This proves they go GREEN twice WITH it. A test that passes once and fails
+    # once must not be committed — and the flake triage above deliberately will
+    # not forgive it later, because a failing file inside the staged diff is
+    # never called a flake.
+
+    test "a candidate whose own tests are unstable is rejected", ctx do
+      System.put_env("GATE_STUB_MODE", "unstable_focused")
+
+      log =
+        capture_log(fn ->
+          assert {:reject, {:unstable_tests, ["test/new_rule_test.exs"]}} = Gate.check(ctx.clone)
+        end)
+
+      assert log =~ "focused stability"
+      assert log =~ "unstable, rejecting"
+    end
 
     # ── sweep_scratch/1 ────────────────────────────────────────────────
     #
@@ -299,6 +331,8 @@ defmodule Cev.Evolve.GateTest do
       # It re-ran only the failing file, then went on to the corpus phase.
       assert calls(ctx) == [
                "test test/new_rule_test.exs",
+               "test test/new_rule_test.exs",
+               "test test/new_rule_test.exs",
                "test --exclude corpus",
                "test --exclude corpus test/base_test.exs",
                "test --only corpus"
@@ -319,6 +353,8 @@ defmodule Cev.Evolve.GateTest do
 
       # And it does NOT pay for a re-run it already knows the answer to.
       assert calls(ctx) == [
+               "test test/new_rule_test.exs",
+               "test test/new_rule_test.exs",
                "test test/new_rule_test.exs",
                "test --exclude corpus"
              ]
@@ -342,6 +378,8 @@ defmodule Cev.Evolve.GateTest do
 
       assert calls(ctx) == [
                "test test/new_rule_test.exs",
+               "test test/new_rule_test.exs",
+               "test test/new_rule_test.exs",
                "test --exclude corpus"
              ]
     end
@@ -354,6 +392,8 @@ defmodule Cev.Evolve.GateTest do
       end)
 
       assert calls(ctx) == [
+               "test test/new_rule_test.exs",
+               "test test/new_rule_test.exs",
                "test test/new_rule_test.exs",
                "test --exclude corpus",
                "test --only corpus",
@@ -447,6 +487,18 @@ defmodule Cev.Evolve.GateTest do
           *)            summary "40 tests, 0 failures"; exit 0 ;;
         esac ;;
       *)
+        # See the note in gate_corpus_dispatch_test.exs: the focused run answers
+        # from the tree, because the mutation check reverts lib/ around it and
+        # H19's stability re-run needs the restored (green) half.
+        if [ "$GATE_STUB_MODE" = "unstable_focused" ] && grep -rqs defmodule lib/new_rule.ex; then
+          # green then red on identical trees — the flake this gate exists for
+          f=$(grep -c "^test test/new_rule_test.exs$" "$GATE_STUB_CALLS")
+          if [ "$f" -ge 3 ]; then summary "2 tests, 1 failure"; exit 2; fi
+          summary "2 tests, 0 failures"; exit 0
+        fi
+        if grep -rqs defmodule lib/new_rule.ex lib/pattern/no_uniq_then_count.ex; then
+          summary "2 tests, 0 failures"; exit 0
+        fi
         printf '\\n== Compilation error in file test/new_rule_test.exs ==\\n'
         printf '** (UndefinedFunctionError) function NewRule.go/0 is undefined\\n'
         exit 1 ;;
@@ -633,7 +685,14 @@ defmodule Cev.Evolve.GateTest do
         esac ;;
       "test --exclude corpus") summary "7333 tests, 0 failures"; exit 0 ;;
       "test --only corpus")    summary "40 tests, 0 failures"; exit 0 ;;
-      *) summary "1 test, 1 failure"; exit 2 ;;
+      *)
+        # The focused run answers from the TREE: red while the mutation check has
+        # lib/ reverted, green once it is restored. H19's stability re-run needs
+        # the green half, and a constant cannot give both.
+        if grep -rqs defmodule lib/pattern/no_uniq_then_count.ex; then
+          summary "2 tests, 0 failures"; exit 0
+        fi
+        summary "1 test, 1 failure"; exit 2 ;;
     esac
     """)
 

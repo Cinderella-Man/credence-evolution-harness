@@ -66,6 +66,8 @@ defmodule Cev.Evolve.GateCorpusDispatchTest do
       # The `test --only corpus` line is simply absent — 234 s not paid.
       assert calls(ctx) == [
                "test test/semantic/fix_thing_check_test.exs test/semantic/fix_thing_fix_test.exs",
+               "test test/semantic/fix_thing_check_test.exs test/semantic/fix_thing_fix_test.exs",
+               "test test/semantic/fix_thing_check_test.exs test/semantic/fix_thing_fix_test.exs",
                "test --exclude corpus"
              ]
     end
@@ -95,6 +97,8 @@ defmodule Cev.Evolve.GateCorpusDispatchTest do
 
       assert calls(ctx) == [
                "test test/pattern/no_thing_check_test.exs test/pattern/no_thing_fix_test.exs",
+               "test test/pattern/no_thing_check_test.exs test/pattern/no_thing_fix_test.exs",
+               "test test/pattern/no_thing_check_test.exs test/pattern/no_thing_fix_test.exs",
                "test --exclude corpus",
                "credence.corpus --only-rule Credence.Pattern.NoThing",
                "test --only corpus"
@@ -122,6 +126,8 @@ defmodule Cev.Evolve.GateCorpusDispatchTest do
       # `credence.corpus --update-snapshot`.
       assert calls(ctx) == [
                "test test/pattern/no_thing_check_test.exs test/pattern/no_thing_fix_test.exs",
+               "test test/pattern/no_thing_check_test.exs test/pattern/no_thing_fix_test.exs",
+               "test test/pattern/no_thing_check_test.exs test/pattern/no_thing_fix_test.exs",
                "test --exclude corpus",
                "credence.corpus --only-rule Credence.Pattern.NoThing"
              ]
@@ -148,6 +154,8 @@ defmodule Cev.Evolve.GateCorpusDispatchTest do
       assert log =~ ":no_result_line"
 
       assert calls(ctx) == [
+               "test test/pattern/no_thing_check_test.exs test/pattern/no_thing_fix_test.exs",
+               "test test/pattern/no_thing_check_test.exs test/pattern/no_thing_fix_test.exs",
                "test test/pattern/no_thing_check_test.exs test/pattern/no_thing_fix_test.exs",
                "test --exclude corpus",
                "credence.corpus --only-rule Credence.Pattern.NoThing",
@@ -229,6 +237,13 @@ defmodule Cev.Evolve.GateCorpusDispatchTest do
             exit 1 ;;
         esac ;;
       *)
+        # The focused run. The mutation check reverts lib/ before calling it and
+        # restores it after, so the honest stub answers from the TREE rather
+        # than a constant: red without the rule, green with it. A constant
+        # cannot model both, and H19's stability re-run needs the green half.
+        if grep -rqs defmodule lib/pattern/no_thing.ex lib/semantic/fix_thing.ex lib/syntax/fix_thing.ex; then
+          summary "2 tests, 0 failures"; exit 0
+        fi
         printf '\\n== Compilation error in file test/x_test.exs ==\\n'
         exit 1 ;;
     esac
