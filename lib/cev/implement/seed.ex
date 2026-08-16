@@ -58,6 +58,7 @@ defmodule Cev.Implement.Seed do
       conventions_block(),
       assumptions_block(ctx),
       repair_block(ctx),
+      corpus_repair_block(ctx),
       closing
     ]
     |> Enum.reject(&(&1 in [nil, ""]))
@@ -418,6 +419,54 @@ defmodule Cev.Implement.Seed do
   end
 
   defp repair_block(_), do: nil
+
+  # The second pass of a corpus retry (H6/T4.8). The Gate rejected the first
+  # attempt for over-firing and handed back the exact findings, so this states
+  # the MECHANICAL trigger — these files and lines now match and did not before
+  # — rather than "your rule over-fires", which is the T4.4 lesson about telling
+  # a model the gate's name instead of its condition.
+  defp corpus_repair_block(%{corpus_repair: %{new: new, gone: gone}})
+       when new != [] or gone != [] do
+    sections =
+      [
+        listing(
+          "NEW findings — your rule fires here and the previous rule set did not",
+          new
+        ),
+        listing(
+          "GONE findings — the corpus expected these and your rule no longer produces them",
+          gone
+        )
+      ]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.join("\n\n")
+
+    """
+    ## SECOND ATTEMPT — the corpus rejected your first one
+
+    This is a repair pass. Your previous rule was correct on its own fixtures and
+    was rejected by the corpus scan, which runs it over 20,076 files of
+    well-reviewed production Elixir where it should find nothing.
+
+    #{sections}
+
+    NARROW the matcher so those lines stop matching, WITHOUT losing the fixture
+    the rule was written for. Widening a guard, adding a shape requirement, or
+    demanding more context are all fair; deleting the check is not. If the
+    finding is genuinely correct and the corpus is wrong, say so in your summary
+    rather than weakening the rule to pass.
+    """
+  end
+
+  defp corpus_repair_block(_), do: nil
+
+  defp listing(_title, []), do: nil
+
+  defp listing(title, entries) do
+    body = entries |> Enum.take(20) |> Enum.map_join("\n", &"  #{&1}")
+    more = if length(entries) > 20, do: "\n  … #{length(entries) - 20} more", else: ""
+    "#{title}:\n#{body}#{more}"
+  end
 
   defp output_contract(%{mode: :new, phase: :pattern}) do
     contract([

@@ -80,4 +80,69 @@ defmodule Cev.Implement.SeedGatesTest do
   test "6. dispatch competition is made concrete" do
     assert seed() =~ "competes with"
   end
+
+  # ── H6/T4.8: the corpus repair brief ────────────────────────────────
+  #
+  # The Router re-seeds the implementer once after a corpus over-fire. Without
+  # this block the second run gets the identical prompt to the first, which is
+  # the whole point of the retry thrown away.
+
+  describe "the corpus repair brief" do
+    defp repair_ctx(repair) do
+      %{
+        mode: :new,
+        phase: :pattern,
+        driver: :llm,
+        spec: %{proposed_name: "no_thing", before: "a", after: "b", rationale: "r"},
+        scaffold: %{phase: :pattern, snake: "no_thing", files: [], module: "X"},
+        corpus_repair: repair
+      }
+    end
+
+    test "the findings appear, and as the mechanical trigger rather than a gate name" do
+      seed =
+        Cev.Implement.Seed.build(
+          repair_ctx(%{new: ["jason/lib/codegen.ex:42  no_thing"], gone: []})
+        )
+
+      assert seed =~ "SECOND ATTEMPT"
+      assert seed =~ "jason/lib/codegen.ex:42  no_thing"
+      # It must say what matched, not merely that a gate objected.
+      assert seed =~ "your rule fires here and the previous rule set did not"
+      assert seed =~ "NARROW the matcher"
+    end
+
+    test "GONE findings are labelled as the opposite problem" do
+      seed = Cev.Implement.Seed.build(repair_ctx(%{new: [], gone: ["a.ex:1  no_thing"]}))
+
+      assert seed =~ "no longer produces them"
+      assert seed =~ "a.ex:1  no_thing"
+    end
+
+    # A long finding list must not become the whole prompt.
+    test "the listing is capped and says how many it dropped" do
+      many = for i <- 1..25, do: "f#{i}.ex:#{i}  no_thing"
+      seed = Cev.Implement.Seed.build(repair_ctx(%{new: many, gone: []}))
+
+      assert seed =~ "f20.ex:20"
+      refute seed =~ "f21.ex:21"
+      assert seed =~ "5 more"
+    end
+
+    # CONTROL: a first attempt has no brief, so the block must be absent
+    # entirely — an empty "second attempt" heading would tell the model it has
+    # already failed once when it has not.
+    test "CONTROL: a first attempt carries no repair block" do
+      seed =
+        Cev.Implement.Seed.build(Map.delete(repair_ctx(%{new: [], gone: []}), :corpus_repair))
+
+      refute seed =~ "SECOND ATTEMPT"
+    end
+
+    test "CONTROL: an empty brief carries no repair block either" do
+      seed = Cev.Implement.Seed.build(repair_ctx(%{new: [], gone: []}))
+
+      refute seed =~ "SECOND ATTEMPT"
+    end
+  end
 end
