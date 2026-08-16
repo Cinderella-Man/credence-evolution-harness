@@ -502,4 +502,141 @@ defmodule Cev.Evolve.GateTest do
       assert Gate.failing_files("test/foo_test.exs:12\n") == []
     end
   end
+
+  # ── The corpus reject, driven end to end (T4.6/H5's original wording) ──
+  #
+  # `corpus_test.exs` unit-tests `Corpus.findings/diff`; nothing drove a corpus
+  # DRIFT through `Gate.check/1` to see the reject shape the Router actually
+  # receives. This does, using the real captured `--only-rule` stdout that
+  # `corpus_dispatch_anchors_test.exs` already committed as a fixture — so the
+  # parser under test is fed bytes credence really printed, not bytes a person
+  # wrote to match the parser.
+
+  describe "check/1 corpus phase" do
+    @drift File.read!("test/fixtures/corpus_only_rule_drift.txt")
+    @clean File.read!("test/fixtures/corpus_only_rule_clean.txt")
+
+    setup do
+      root = Path.join(System.tmp_dir!(), "cev_gate_corpus_#{System.unique_integer([:positive])}")
+      clone = Path.join(root, "clone")
+      bin = Path.join(root, "bin")
+      File.mkdir_p!(Path.join(clone, "lib/pattern"))
+      File.mkdir_p!(Path.join(clone, "test/pattern"))
+      File.mkdir_p!(bin)
+
+      git = fn args -> System.cmd("git", args, cd: clone, stderr_to_stdout: true) end
+      git.(["init", "-q", "."])
+      git.(["config", "user.email", "gate@test"])
+      git.(["config", "user.name", "gate"])
+      File.write!(Path.join(clone, "lib/base.ex"), "defmodule Base0 do\nend\n")
+      git.(["add", "-A"])
+      git.(["commit", "-qm", "base"])
+
+      # A candidate shaped so CorpusDispatch.plan/2 answers :scoped — one
+      # lib/pattern/ file declaring the behaviour, plus its own tests.
+      File.write!(
+        Path.join(clone, "lib/pattern/no_uniq_then_count.ex"),
+        "defmodule Credence.Pattern.NoUniqThenCount do\n  use Credence.Pattern.Rule\nend\n"
+      )
+
+      File.write!(Path.join(clone, "test/pattern/no_uniq_then_count_test.exs"), "# new\n")
+
+      calls = Path.join(root, "calls.txt")
+      File.write!(calls, "")
+      write_corpus_stub_mix(Path.join(bin, "mix"))
+
+      prev_run_dir = Application.get_env(:cev, :run_dir)
+      Application.put_env(:cev, :run_dir, Path.join(root, "var/run"))
+      prev_path = System.get_env("PATH")
+      System.put_env("PATH", bin <> ":" <> prev_path)
+      System.put_env("GATE_STUB_CALLS", calls)
+      System.put_env("GATE_STUB_CORPUS_DRIFT", @drift)
+      System.put_env("GATE_STUB_CORPUS_CLEAN", @clean)
+
+      on_exit(fn ->
+        if prev_run_dir,
+          do: Application.put_env(:cev, :run_dir, prev_run_dir),
+          else: Application.delete_env(:cev, :run_dir)
+
+        System.put_env("PATH", prev_path)
+
+        Enum.each(
+          ~w(GATE_STUB_CALLS GATE_STUB_MODE GATE_STUB_CORPUS_DRIFT GATE_STUB_CORPUS_CLEAN),
+          &System.delete_env/1
+        )
+
+        File.rm_rf!(root)
+      end)
+
+      %{clone: clone, calls: calls}
+    end
+
+    test "a scoped over-fire DRIFT rejects with the finding attached, before the full scan",
+         ctx do
+      System.put_env("GATE_STUB_MODE", "corpus_drift")
+
+      log =
+        capture_log(fn ->
+          assert {:reject, {:corpus, :over_fire, detail}} = Gate.check(ctx.clone)
+
+          # The reject carries the evidence the Router books, not just an atom.
+          assert detail.new != []
+          assert Enum.any?(detail.new, &String.contains?(&1, "archethic"))
+          assert detail.gone == []
+          # And the candidate's patch rides out with it.
+          assert detail.patch =~ "+++ b/lib/pattern/no_uniq_then_count.ex"
+        end)
+
+      assert log =~ "DRIFT (over_fire)"
+
+      # The whole point of the scoped pre-gate: the 234 s full scan never runs.
+      refute Enum.any?(calls(ctx), &(&1 == "test --only corpus"))
+    end
+
+    # The task's contract is exit 0 + RESULT=clean, or non-zero + RESULT=drift.
+    # A stub that printed drift and exited 0 was how this test first failed, and
+    # believing that combination is exactly the mutant T2.1's controls kill — so
+    # pin it: a drift claim on a zero exit is INCONCLUSIVE, never a reject, and
+    # inconclusive falls through to the full scan rather than forgiving anything.
+    test "CONTROL: RESULT=drift on a ZERO exit is not believed", ctx do
+      System.put_env("GATE_STUB_MODE", "corpus_drift_exit0")
+
+      capture_log(fn -> assert {:ok, _summary} = Gate.check(ctx.clone) end)
+
+      assert "test --only corpus" in calls(ctx)
+    end
+
+    test "CONTROL: a clean scoped scan does NOT stop there — it falls through to the full phase",
+         ctx do
+      System.put_env("GATE_STUB_MODE", "corpus_clean")
+
+      capture_log(fn -> assert {:ok, _summary} = Gate.check(ctx.clone) end)
+
+      # Clean scoped is an optimization, never the authority: fix-safety,
+      # scope-parity and fix-breakage are untouched by --only-rule, and
+      # scope-parity fires hardest on a rule with zero findings.
+      assert "test --only corpus" in calls(ctx)
+    end
+  end
+
+  defp write_corpus_stub_mix(path) do
+    File.write!(path, """
+    #!/usr/bin/env bash
+    echo "$@" >> "$GATE_STUB_CALLS"
+    summary() { printf '\\nFinished in 1.0 seconds (0.5s async, 0.5s sync)\\n%s\\n' "$1"; }
+    case "$*" in
+      "credence.corpus --only-rule"*)
+        case "$GATE_STUB_MODE" in
+          corpus_drift) printf '%s' "$GATE_STUB_CORPUS_DRIFT"; exit 1 ;;
+          corpus_drift_exit0) printf '%s' "$GATE_STUB_CORPUS_DRIFT"; exit 0 ;;
+          *)            printf '%s' "$GATE_STUB_CORPUS_CLEAN"; exit 0 ;;
+        esac ;;
+      "test --exclude corpus") summary "7333 tests, 0 failures"; exit 0 ;;
+      "test --only corpus")    summary "40 tests, 0 failures"; exit 0 ;;
+      *) summary "1 test, 1 failure"; exit 2 ;;
+    esac
+    """)
+
+    File.chmod!(path, 0o755)
+  end
 end
