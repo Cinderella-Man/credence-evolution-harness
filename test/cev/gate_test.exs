@@ -249,6 +249,43 @@ defmodule Cev.Evolve.GateTest do
     # Live evidence for why: this harness's own suite went 325/326 then 326/326
     # in one session, with nothing changed between the runs.
 
+    # ── sweep_scratch/1 ────────────────────────────────────────────────
+    #
+    # It deletes untracked files, which makes it the one destructive step that
+    # runs before any check — and it had no test at all (T4.6's H5 residue).
+    # What matters is not that it sweeps, but exactly what it must NOT sweep:
+    # the candidate's own new rule and test are untracked too, and are the
+    # entire point of the run.
+
+    test "sweeps untracked scratch outside lib/ and test/, and keeps the candidate", ctx do
+      scratch = Path.join(ctx.clone, "probe.exs")
+      nested = Path.join(ctx.clone, "tmp/notes.md")
+      File.mkdir_p!(Path.dirname(nested))
+      File.write!(scratch, "IO.puts(:hi)\n")
+      File.write!(nested, "scratch\n")
+
+      capture_log(fn -> assert {:ok, _} = Gate.check(ctx.clone) end)
+
+      refute File.exists?(scratch), "an untracked root scratch file should be swept"
+      refute File.exists?(nested), "an untracked scratch file in any other dir should be swept"
+
+      # The candidate is untracked too — sweeping it would delete the thing
+      # being judged.
+      assert File.exists?(Path.join(ctx.clone, "lib/new_rule.ex"))
+      assert File.exists?(Path.join(ctx.clone, "test/new_rule_test.exs"))
+    end
+
+    test "CONTROL: sweeping leaves TRACKED files outside lib/ and test/ alone", ctx do
+      readme = Path.join(ctx.clone, "README.md")
+      File.write!(readme, "tracked\n")
+      System.cmd("git", ["add", "README.md"], cd: ctx.clone, stderr_to_stdout: true)
+      System.cmd("git", ["commit", "-qm", "readme"], cd: ctx.clone, stderr_to_stdout: true)
+
+      capture_log(fn -> assert {:ok, _} = Gate.check(ctx.clone) end)
+
+      assert File.exists?(readme), "a tracked file is not scratch — only --others is swept"
+    end
+
     test "a red whose failing file is OUTSIDE the staged diff and passes on re-run PROCEEDS",
          ctx do
       System.put_env("GATE_STUB_MODE", "red_unstaged")
