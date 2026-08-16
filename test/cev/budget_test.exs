@@ -5,7 +5,13 @@ defmodule Cev.BudgetTest do
   setup do
     test_pid = self()
     on_runaway = fn reason -> send(test_pid, {:runaway, reason}) end
-    {:ok, pid} = start_supervised({Budget, [name: nil, on_runaway: on_runaway]})
+    # `spent_usd: 0.0` explicitly. `init/1` otherwise seeds from the run's
+    # usage log so a restart cannot forget its way past the runaway ceiling
+    # (see `budget_resume_test.exs`), and these tests are about the arithmetic,
+    # not about whatever the run dir happens to hold.
+    {:ok, pid} =
+      start_supervised({Budget, [name: nil, on_runaway: on_runaway, spent_usd: 0.0]})
+
     %{budget: pid}
   end
 

@@ -69,8 +69,17 @@ defmodule Cev.Budget do
     if Keyword.get(opts, :heartbeat, true),
       do: :timer.send_interval(@heartbeat_ms, self(), :heartbeat)
 
+    usage_log = Config.run_path("usage.jsonl")
+
     state = %{
-      spent_usd: 0.0,
+      # Seeded from what has ALREADY been spent this run, not from zero.
+      #
+      # `runaway_ceiling_usd` is the only thing standing between a stuck loop
+      # and an unbounded bill, and starting at 0.0 made it per-VM-lifetime
+      # rather than per-run. A crash-restart loop — which is exactly the shape
+      # of the failure it exists to stop — could never trip it, because every
+      # restart forgot everything the previous one spent.
+      spent_usd: Keyword.get(opts, :spent_usd) || spent_so_far(usage_log),
       sessions_without_usage: 0,
       consecutive_429: 0,
       current_row: nil,
@@ -81,12 +90,40 @@ defmodule Cev.Budget do
       max_429: Map.get(budget, :max_consecutive_429, @default_max_consecutive_429),
       prices: Map.get(budget, :prices, %{}),
       default_price: Map.get(budget, :default_price, @default_price),
-      usage_log: Config.run_path("usage.jsonl"),
+      usage_log: usage_log,
       heartbeat_log: Config.run_path("heartbeat.jsonl"),
       on_runaway: Keyword.get(opts, :on_runaway, &Cev.shutdown/1)
     }
 
     {:ok, state}
+  end
+
+  # Sum `cost_usd` over the run's existing usage log. Unreadable or malformed
+  # lines are skipped rather than raising: a corrupt byte in the ledger must not
+  # stop the run, and skipping can only ever UNDER-count, which fails toward
+  # "keep going" rather than toward a false runaway shutdown.
+  defp spent_so_far(path) do
+    case File.read(path) do
+      {:ok, contents} ->
+        total =
+          contents
+          |> String.split("\n", trim: true)
+          |> Enum.reduce(0.0, fn line, acc ->
+            case Jason.decode(line) do
+              {:ok, %{"cost_usd" => cost}} when is_number(cost) -> acc + cost
+              _ -> acc
+            end
+          end)
+
+        if total > 0.0 do
+          Logger.info("[Budget] resuming with $#{Float.round(total, 2)} already spent this run")
+        end
+
+        total
+
+      {:error, _} ->
+        0.0
+    end
   end
 
   @impl true
