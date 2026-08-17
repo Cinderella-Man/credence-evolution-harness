@@ -20,7 +20,18 @@ defmodule Cev.Orchestrator do
   use GenServer, restart: :transient
   require Logger
 
-  alias Cev.{Budget, Config, Preflight, Progress, RowLog, SanityGate, TaskSource, Workspace}
+  alias Cev.{
+    Budget,
+    Config,
+    InFlight,
+    Preflight,
+    Progress,
+    RowLog,
+    SanityGate,
+    TaskSource,
+    Workspace
+  }
+
   alias Cev.Evolve.Router
   alias Cev.Pipeline.Solve
 
@@ -103,12 +114,48 @@ defmodule Cev.Orchestrator do
   end
 
   def handle_info(:next, %{pending: [idx | rest]} = state) do
-    outcome = run_row(idx, state)
+    outcome = run_or_skip(idx, state)
     state = apply_breaker(state, outcome, idx)
     state = %{state | pending: rest, done: state.done + 1}
     log_progress(state)
     send(self(), :next)
     {:noreply, state}
+  end
+
+  # A row that killed the VM is retried first on every restart, because `pending`
+  # is recomputed from `progress` and the permutation is derived from the pass
+  # number — so the order is identical and the loop never advances past it. The
+  # in-flight marker is what makes that visible: written before the row starts,
+  # cleared when it finishes, and still present at boot only if the previous VM
+  # died working on it.
+  #
+  # Past the limit the row is consumed and skipped, which is the same trade
+  # `TransientAttempts` makes for timeouts: a run that cannot get past one row is
+  # worth less than a run that skips it and says so.
+  defp run_or_skip(idx, state) do
+    crashes = InFlight.start(idx)
+
+    if InFlight.poisoned?(crashes) do
+      Logger.error(
+        "[idx=#{idx}] SKIPPED — the VM has died on this row #{crashes} time(s). " <>
+          "Consuming it so the run can make progress; investigate it by hand."
+      )
+
+      InFlight.finish()
+      write_row_stat(state, %{index: idx, ts: System.os_time(:second), outcome: :vm_crash_loop})
+      Progress.mark_done(state.progress_path, idx)
+      :vm_crash_loop
+    else
+      if crashes > 0 do
+        Logger.warning(
+          "[idx=#{idx}] a previous VM died on this row #{crashes} time(s) — retrying"
+        )
+      end
+
+      outcome = run_row(idx, state)
+      InFlight.finish()
+      outcome
+    end
   end
 
   # Consecutive-:transient_abort circuit breaker: a real Mimo outage halts
