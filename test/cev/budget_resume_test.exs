@@ -38,8 +38,11 @@ defmodule Cev.BudgetResumeTest do
       File.rm_rf!(tmp)
     end)
 
+    Process.put(:cev_budget_tmp, tmp)
     %{tmp: tmp}
   end
+
+  defp tmp_dir, do: Process.get(:cev_budget_tmp)
 
   defp write_usage(tmp, costs) do
     File.write!(
@@ -99,5 +102,37 @@ defmodule Cev.BudgetResumeTest do
     write_usage(tmp, [999.0])
 
     assert Budget.spent(start_budget(spent_usd: 0.0)) == 0.0
+  end
+
+  # ── A seed above the ceiling is a stale log, not a runaway ─────────────
+  #
+  # Found by running it: with resume on, `var/run/usage.jsonl` in this repo
+  # seeds $35,731 against a $500 ceiling, and the next real call would have shut
+  # the run down before it did anything. That log holds 5,197 records over three
+  # separate periods against a 3rd evolution that cost about $67 — most of it
+  # synthetic, written by `mix test` before the test env got its own run dir.
+  #
+  # The argument for treating it as stale rather than as a runaway is short: a
+  # run that really crossed the ceiling would have STOPPED at the crossing, so
+  # it can never have logged more than the ceiling. A total above it therefore
+  # proves the log spans more than one run.
+  describe "a usage log that spans more than one run" do
+    test "does not seed, and says why" do
+      write_usage(tmp_dir(), [400.0, 400.0])
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert Budget.spent(start_budget()) == 0.0
+        end)
+
+      assert log =~ "spans more than one run"
+    end
+
+    # The boundary, so "above the ceiling" cannot quietly become "near it".
+    test "a total just under the ceiling still seeds" do
+      write_usage(tmp_dir(), [499.0])
+
+      assert_in_delta Budget.spent(start_budget()), 499.0, 0.0001
+    end
   end
 end

@@ -65,6 +65,7 @@ defmodule Cev.Budget do
   @impl true
   def init(opts) do
     budget = Config.budget()
+    ceiling = Map.get(budget, :runaway_ceiling_usd, 500.0)
 
     if Keyword.get(opts, :heartbeat, true),
       do: :timer.send_interval(@heartbeat_ms, self(), :heartbeat)
@@ -79,14 +80,14 @@ defmodule Cev.Budget do
       # rather than per-run. A crash-restart loop — which is exactly the shape
       # of the failure it exists to stop — could never trip it, because every
       # restart forgot everything the previous one spent.
-      spent_usd: Keyword.get(opts, :spent_usd) || resume_spend(usage_log),
+      spent_usd: Keyword.get(opts, :spent_usd) || resume_spend(usage_log, ceiling),
       sessions_without_usage: 0,
       consecutive_429: 0,
       current_row: nil,
       records: 0,
       tokens: %{in: 0, cache_read: 0, cache_create: 0, out: 0},
       started_mono: nil,
-      ceiling: Map.get(budget, :runaway_ceiling_usd, 500.0),
+      ceiling: ceiling,
       max_429: Map.get(budget, :max_consecutive_429, @default_max_consecutive_429),
       prices: Map.get(budget, :prices, %{}),
       default_price: Map.get(budget, :default_price, @default_price),
@@ -103,8 +104,41 @@ defmodule Cev.Budget do
   # accumulates across `mix test` invocations, so a booted Budget would seed from
   # thousands of dollars of synthetic records and the next real `record/4` would
   # trip the runaway ceiling and call `Cev.shutdown/1` in the middle of the suite.
-  defp resume_spend(usage_log) do
-    if Application.get_env(:cev, :budget_resume, true), do: spent_so_far(usage_log), else: 0.0
+  defp resume_spend(usage_log, ceiling) do
+    if Application.get_env(:cev, :budget_resume, true),
+      do: usable_seed(spent_so_far(usage_log), ceiling),
+      else: 0.0
+  end
+
+  # A seed ABOVE the ceiling cannot be a legitimate resume, and the argument is
+  # short: a run that really crossed the ceiling would have shut down at the
+  # crossing, so it can never have logged more. A total above it therefore means
+  # the log spans MORE than this run — which `var/run/usage.jsonl` in this repo
+  # does today: 5,197 records over three separate periods totalling $35,731,
+  # against a 3rd evolution that actually cost about $67. Most of it is
+  # synthetic, written by `mix test` before the test env got its own run dir.
+  #
+  # Seeding that would make the runaway guard refuse to start the run at all —
+  # trading the failure it exists to prevent for a different one. So it is
+  # reported loudly and treated as stale: the in-VM accrual guard still works,
+  # and the maintainer gets told to rotate the log rather than being handed a
+  # silent shutdown.
+  defp usable_seed(total, ceiling) when total > ceiling do
+    Logger.error(
+      "[Budget] usage.jsonl totals $#{Float.round(total, 2)}, above the $#{ceiling} ceiling. " <>
+        "A run that crossed the ceiling would have stopped there, so this log spans more " <>
+        "than one run. Starting from $0.00 — rotate or archive it to restore resume."
+    )
+
+    0.0
+  end
+
+  defp usable_seed(total, _ceiling) do
+    if total > 0.0 do
+      Logger.info("[Budget] resuming with $#{Float.round(total, 2)} already spent this run")
+    end
+
+    total
   end
 
   # Sum `cost_usd` over the run's existing usage log. Unreadable or malformed
@@ -123,10 +157,6 @@ defmodule Cev.Budget do
               _ -> acc
             end
           end)
-
-        if total > 0.0 do
-          Logger.info("[Budget] resuming with $#{Float.round(total, 2)} already spent this run")
-        end
 
         total
 
