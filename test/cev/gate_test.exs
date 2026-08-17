@@ -192,6 +192,58 @@ defmodule Cev.Evolve.GateTest do
       %{clone: clone, calls: calls}
     end
 
+    # ── The two mutation-check rejects, which had no controls at all ──────
+    #
+    # Census of the 489 archived row logs of the 3rd evolution: `mutation OK`
+    # appears in 179 of them and `mutation_no_effect` in exactly ONE, so this
+    # check rejected 1 of 180 candidates. Neither of its reject atoms had a unit
+    # test, so a 0.6% rejection rate was indistinguishable from a check that had
+    # quietly stopped working. These are the controls it shipped without.
+
+    test "a changed test that stays GREEN without its rule is rejected", ctx do
+      # The stub answers 0 for the focused run regardless of the tree, so the
+      # test passes with lib/ reverted — an assertion-free test, which is exactly
+      # what this check exists to catch.
+      System.put_env("GATE_STUB_MODE", "mutation_no_effect")
+
+      capture_log(fn ->
+        assert {:reject, {:mutation_no_effect, files}} = Gate.check(ctx.clone)
+        assert "test/new_rule_test.exs" in files
+      end)
+    end
+
+    # `:no_changed_test_to_mutate` is reachable only through a narrow gap, and
+    # finding it is the reason this control was worth writing. `check_touches`
+    # (which runs first) asks whether ANY staged path is under `test/`, counting
+    # every git status; `check_mutation` asks for test files that were ADDED or
+    # MODIFIED. A candidate that adds a rule and DELETES an existing test passes
+    # the first and has nothing to mutate at the second.
+    #
+    # Removing the candidate's test file instead gives `:no_test_change` — which
+    # is what my first attempt at this test asserted, and it was wrong.
+    test "a candidate that only DELETES a test has nothing to mutate", ctx do
+      File.rm!(Path.join(ctx.clone, "test/base_test.exs"))
+      File.rm!(Path.join(ctx.clone, "test/new_rule_test.exs"))
+
+      capture_log(fn ->
+        assert {:reject, :no_changed_test_to_mutate} = Gate.check(ctx.clone)
+      end)
+
+      # The point of rejecting here is that it costs nothing: no suite is run.
+      assert calls(ctx) == []
+    end
+
+    # And the near miss, so the two rejects cannot be confused: no test/ path at
+    # all is a different atom, raised by a different check, one step earlier.
+    test "a candidate with no test/ path at all is :no_test_change, not the mutation reject",
+         ctx do
+      File.rm!(Path.join(ctx.clone, "test/new_rule_test.exs"))
+
+      capture_log(fn ->
+        assert {:reject, :no_test_change} = Gate.check(ctx.clone)
+      end)
+    end
+
     test "a crashed runner on BOTH attempts is environmental, not :full_suite_red", ctx do
       System.put_env("GATE_STUB_MODE", "crash")
 
@@ -487,6 +539,13 @@ defmodule Cev.Evolve.GateTest do
           *)            summary "40 tests, 0 failures"; exit 0 ;;
         esac ;;
       *)
+        # The mutation check reverts lib/ and re-runs the changed tests; a test
+        # that stays GREEN without its rule proves nothing. This mode makes the
+        # focused run answer 0 REGARDLESS of the tree, which is exactly the
+        # assertion-free test `{:mutation_no_effect, _}` exists to reject.
+        if [ "$GATE_STUB_MODE" = "mutation_no_effect" ]; then
+          summary "2 tests, 0 failures"; exit 0
+        fi
         # See the note in gate_corpus_dispatch_test.exs: the focused run answers
         # from the tree, because the mutation check reverts lib/ around it and
         # H19's stability re-run needs the restored (green) half.
